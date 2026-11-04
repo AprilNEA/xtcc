@@ -1,0 +1,7 @@
+/target/
+/libxtcc_inject.dylib
+/.build-module.*
+.DS_Store
+/IMPLEMENTATION.md
+__pycache__/
+*.pyc
