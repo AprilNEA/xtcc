@@ -1,134 +1,111 @@
 # xtcc
 
-[Simplified Chinese](README_CN.md)
+**A Rust control layer for macOS TCC research.**
 
-Temporarily bypass macOS TCC checks in a development environment.
-The Rust control layer manages commands, connections, expiration times, and logs.
-The Objective-C injection library retains the upstream implementation of private interfaces.
+[Simplified Chinese](README_CN.md) · [Validation](VALIDATION.md)
 
-**This project is intended only for isolated development devices that you are authorized to administer.**
-It is not a permission-request mechanism for ordinary applications.
-It does not automatically make a system with SIP enabled meet the runtime requirements.
+xtcc provides a command-line interface for managing temporary TCC bypass sessions and inspecting permission-check activity on development Macs. It combines a Rust CLI and broker with the native hooks from [tcc-bypass](https://github.com/unixzii/tcc-bypass).
 
-## Current Rewrite Scope
+> **Experimental:** intended for isolated Macs you own or are authorized to administer. Builds and offline tests pass; live injection and end-to-end behavior have not been verified. This is not a replacement for an application's normal permission requests.
 
-The outer Python launcher and Objective-C helper have been replaced with Rust.
-The injection library is still compiled for `arm64e` using Apple Clang.
-The two components communicate through Mach messages.
+## Features
 
-LLDB still executes Python scripts internally.
-This project therefore does not eliminate Python entirely.
-It is not a complete, pure-Rust implementation either.
+- **Time-limited controls** with configurable expiration and broker reuse.
+- **Structured logs** with replay, live streaming, snapshots, and JSON output.
+- **Bounded memory use** with explicit log-gap reporting for slow readers.
+- **Rust resource management** for Mach port rights, request tracking, and connection lifetimes.
+- **Read-only diagnostics** to check tools and build artifacts without attaching to system processes.
 
-## Requirements
+## Getting started
+
+### Requirements
 
 - An Apple Silicon Mac.
-- Rust and Cargo.
-- Xcode, including the macOS SDK, Clang, and LLDB with Python support.
-- System-provided `make` and `codesign`.
+- Rust and Cargo. The declared minimum Rust version is 1.85; see [validation notes](VALIDATION.md) for the tested toolchain.
+- Xcode with the macOS SDK, Clang, and Python-enabled LLDB.
+- The system `make` and `codesign` tools.
 
-The native library's minimum deployment target is macOS 15.0.
-This does not mean that every version of macOS 15 and later has been verified.
-The private TCC interfaces remain dependent on the specific OS version.
+The build targets macOS 15.0 or later. This is a deployment target, not a compatibility guarantee: runtime support depends on private TCC interfaces and the OS version.
 
-Control operations require root privileges.
-Injection also requires the system to permit debugger attachment and loading this library.
-Upstream requires SIP to be disabled; this project does not modify SIP for you.
+### Build
 
-## Build and Offline Checks
+From the repository root:
 
 ```sh
 make
-make check
 ./target/release/xtcc --help
 ./target/release/xtcc doctor
 ```
 
-The build produces:
+| Artifact | Purpose |
+| --- | --- |
+| `target/release/xtcc` | Rust CLI and broker |
+| `libxtcc_inject.dylib` | Ad-hoc-signed `arm64e` native library |
 
-- `target/release/xtcc`: the Rust command-line program and broker.
-- `libxtcc_inject.dylib`: the ad-hoc-signed injection library.
+Building and running `doctor` do not load the library or start the broker. `doctor` checks files and tool locations, not runtime permissions.
 
-Building does not load the library or start the broker.
-Tests must not attach to `tccd` or change TCC permissions.
-Mach loopback tests use only ports created by the tests themselves.
-The native ABI fixtures only compare memory layouts and message encoding.
+The Makefile uses `$HOME/.cargo/bin/cargo` by default. Override it with `make CARGO=/path/to/cargo` if needed.
 
-By default, `CARGO` points to `$HOME/.cargo/bin/cargo`.
-If Cargo is installed elsewhere, run `make CARGO=/path/to/cargo`.
+## Command reference
 
-## Commands
+| Command | Description |
+| --- | --- |
+| `build [--force]` | Build the CLI and native library. |
+| `doctor` | Check tool locations and build artifacts. |
+| `start [minutes]` | Enable or renew a temporary session. Defaults to 30 minutes; accepts 1-1440. Alias: `enable`. |
+| `stop` | Disable the bypass without unloading the native library. Alias: `disable`. |
+| `status` | Report connections, current state, expiration, and log counts. |
+| `logs` | Replay buffered records, then follow new activity. |
+| `logs --snapshot` | Read the current buffer and exit. |
+| `logs --all` | Include Apple attribution records hidden by default. |
 
-`start [minutes]` temporarily enables the check bypass.
-The duration defaults to 30 minutes and must be between 1 and 1440 minutes.
-Repeated calls reuse a healthy broker and update the expiration time.
-`enable` is an alias for `start`.
+The global `--json` flag produces machine-readable output; log streams use newline-delimited JSON. Log filtering affects display only, not the scope of the bypass.
 
-`stop` stops the bypass but does not unload the injection library.
-`disable` is an alias for `stop`.
-Method replacements already loaded remain in place until the corresponding process exits.
+Control operations require root. xtcc never invokes `sudo` automatically, and elevated privileges alone do not guarantee debugger attachment or library loading. The upstream implementation expects SIP to be disabled; xtcc does not change SIP.
 
-`status` queries the connection, state, expiration time, and log counts.
-`logs` replays buffered records and continues reading new records.
-`logs --snapshot` reads a single snapshot only.
-`logs --all` includes Apple attribution records that are hidden by default.
-`--json` produces machine-readable output.
+### Library location
 
-`doctor` only checks tool locations and build artifacts.
-It does not test debugger attachment permissions or enable the bypass.
-The program never invokes `sudo` implicitly.
+Set `XTCC_LIBRARY` to override the native library path. Otherwise, xtcc looks beside the executable, then in the source directory. Do not replace build artifacts while they are in use.
 
-Use `XTCC_LIBRARY` to specify the injection library.
-Otherwise, the program looks for the library next to the executable or in the source directory.
-Do not replace the build artifacts used by the program while it is running.
+## Architecture
 
-## Behavior and Limitations
+The Rust CLI handles arguments and output, while a broker manages connections, requests, and log subscriptions. The native component retains the upstream Objective-C hooks and communicates with the broker through Mach messages.
 
-The permission-check hooks retain the upstream logic.
-The injected component stops bypassing checks if it loses its connection to the broker.
-Lost logs do not block permission checks.
-All logs exist only in bounded in-memory buffers.
+The native library is built with Apple Clang for `arm64e`. LLDB still uses its embedded Python runtime for bootstrap, so xtcc is a Rust control-layer rewrite, not an entirely Rust implementation.
 
-The default buffer holds 1,024 records, with a serialized-data limit of 8 MiB.
-An individual message body is limited to 16 KiB.
-Slow subscribers receive notifications of gaps in the logs.
-Logs are not retained after the broker exits.
-Broker lifecycle diagnostics are written to the system syslog.
-These diagnostics begin with `xtcc:` and do not include permission events.
+The control service is `dev.xtcc.control`, and the logging subsystem is `dev.xtcc`.
 
-`BYPASS` means that a hook supplemented the entitlement-check result.
-It does not guarantee that the final permission request succeeds.
-The default hiding rules affect only log display, not the scope of the bypass.
+## Behavior and limitations
 
-The service identifier has been changed to `dev.xtcc.control`.
-The logging subsystem has been changed to `dev.xtcc`.
-Do not operate on the same `tccd` with this project and the upstream tool at the same time.
+- The injected component stops bypassing checks when it loses its broker connection. `stop` does not unload it; method replacements remain until the target process exits.
+- Permission logs stay in memory. The default buffer holds up to 1,024 records and 8 MiB of encoded data, with a 16 KiB limit per message body. Logs are lost when the broker exits; dropped logs do not block permission checks.
+- Broker lifecycle diagnostics go to system syslog with an `xtcc:` prefix. They do not contain permission events.
+- A `BYPASS` record means a hook supplemented an entitlement-check result, not that the final permission request necessarily succeeded.
+- Do not use xtcc and the upstream tool against the same `tccd` process at the same time.
 
-## Validation Status
+Live injection, cross-version compatibility, and recovery from system-service failures remain unverified. See [VALIDATION.md](VALIDATION.md) for the exact test scope and results.
 
-Validation for this round is limited to builds, static checks, and offline tests.
-The final results are recorded in `VALIDATION.md`.
-Actual injection, compatibility across OS versions, and recovery from system-service failures have not been verified.
+## Development
+
+Run formatting checks, Clippy, and the test suite with:
+
+```sh
+make check
+```
+
+Tests cover protocol encoding, native ABI compatibility, Mach right ownership, broker state, log buffering, and CLI output. Mach loopback tests use only ports created by the test process; no tests attach to `tccd` or change TCC permissions.
 
 # Acknowlodge
 
-Thanks to [unixzii](https://github.com/unixzii) for
-[tcc-bypass](https://github.com/unixzii/tcc-bypass), whose design and implementation
-provided the basis for this Rust control-layer rewrite.
-The reference commit is `78da98104bafff7ecb96935cf198cb4196a28ffd`.
+Thanks to [unixzii](https://github.com/unixzii) for [tcc-bypass](https://github.com/unixzii/tcc-bypass), the foundation for this project. The Rust control layer follows its protocol and lifecycle design.
 
-The following Objective-C files were retained from that commit:
+The following files were retained from commit `78da98104bafff7ecb96935cf198cb4196a28ffd`:
 
 - `native/tccd_inject.m`
 - `native/Attribution.m`
 - `native/Attribution.h`
 - `native/ControlProtocol.h`
 
-The service and logging identifiers have been changed to `dev.xtcc`.
-The injection library's exported `cyan_tccd_*` symbols remain unchanged.
-The Rust control layer follows the original protocol and lifecycle behavior.
+Service and logging identifiers use the `dev.xtcc` namespace; the exported `cyan_tccd_*` symbols remain unchanged.
 
-No LICENSE file was found in the reference commit. The presence of upstream code
-in this repository does not imply permission to redistribute it. Confirm
-authorization with the original author before publishing or distributing it.
-`Cargo.toml` sets `publish = false`.
+**Licensing:** no LICENSE file was found in the referenced upstream commit. Public source availability does not grant redistribution rights. Confirm permission with the original author before publishing or distributing upstream-derived code. Cargo publishing is disabled with `publish = false`.
