@@ -1,0 +1,37 @@
+name: Source checks
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-checks:
+    name: Formatting and source hygiene
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust formatting tools
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+
+      - name: Check Rust formatting
+        run: cargo +1.98.1 fmt --all --check
+
+      - name: Check source files
+        run: python3 .github/scripts/check_source.py
+
+      # Source checks only: no compilation, target attachment, packaging, or publishing.

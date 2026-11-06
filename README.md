@@ -95,6 +95,8 @@ make check
 
 Tests cover protocol encoding, native ABI compatibility, Mach right ownership, broker state, log buffering, and CLI output. Mach loopback tests use only ports created by the test process; no tests attach to `tccd` or change TCC permissions.
 
+The [Source checks](.github/workflows/source-checks.yml) workflow checks Rust formatting, Python syntax, and English-only source text on pushes and pull requests to `master`. It does not build binaries, run the program, upload artifacts, or publish releases. Publishing to crates.io and GitHub Releases is not configured.
+
 # Acknowlodge
 
 Thanks to [unixzii](https://github.com/unixzii) for [tcc-bypass](https://github.com/unixzii/tcc-bypass), the foundation for this project. The Rust control layer follows its protocol and lifecycle design.
