@@ -1,5 +1,6 @@
-//! Mach 权利由 RAII 类型拥有；收到的消息由接收缓冲区负责销毁。
-//! 此模块的测试仅使用本进程创建的端口，不注册 service 或获取其他 task。
+//! Mach rights are owned by RAII types; received messages are destroyed by the receive buffer.
+//! Tests in this module use only ports created by this process, without registering services
+//! or acquiring other tasks.
 
 use crate::protocol::{self, AuditToken, Frame, Header, Operation};
 use anyhow::{ensure, Context, Result};
@@ -8,7 +9,7 @@ use std::{error::Error, fmt, mem, ptr};
 
 pub type Port = u32;
 
-// 以下数值已核对本机 Xcode 27 的 mach/{message,port,notify}.h。
+// These values were checked against mach/{message,port,notify}.h in the local Xcode 27 SDK.
 const RIGHT_SEND: u32 = 0;
 const RIGHT_RECEIVE: u32 = 1;
 const RIGHT_PORT_SET: u32 = 3;
@@ -88,7 +89,7 @@ extern "C" {
 }
 
 fn task_self() -> Port {
-    // SAFETY: libSystem 在进程初始化时设置此 task 名称；本程序不修改它。
+    // SAFETY: libSystem sets this task name during process initialization; this program never modifies it.
     unsafe { mach_task_self_ }
 }
 
@@ -131,8 +132,8 @@ pub fn is_timeout(error: &anyhow::Error) -> bool {
 
 fn release_send(name: Port) {
     if valid(name) {
-        // SAFETY: 调用者拥有一个 send、send-once 或已转成 dead-name 的引用。
-        // Drop 不抛错；端口死亡不改变 mach_port_deallocate 的引用释放规则。
+        // SAFETY: The caller owns a send, send-once, or converted dead-name reference.
+        // Drop does not report errors; port death does not change mach_port_deallocate's reference-release rules.
         unsafe {
             mach_port_deallocate(task_self(), name);
         }
@@ -169,7 +170,7 @@ impl Drop for SendOnceRight {
 impl Drop for ReceiveRight {
     fn drop(&mut self) {
         if valid(self.name) {
-            // SAFETY: 此对象独占 receive right；只释放该权利，不销毁同名 send 引用。
+            // SAFETY: This object exclusively owns the receive right; releasing it does not destroy send references with the same name.
             unsafe {
                 mach_port_mod_refs(task_self(), self.name, RIGHT_RECEIVE, -1);
             }
@@ -179,7 +180,7 @@ impl Drop for ReceiveRight {
 impl Drop for PortSet {
     fn drop(&mut self) {
         if valid(self.name) {
-            // SAFETY: 此对象拥有 port-set right；成员 receive right 不由 set 拥有。
+            // SAFETY: This object owns the port-set right; the set does not own its members' receive rights.
             unsafe {
                 mach_port_mod_refs(task_self(), self.name, RIGHT_PORT_SET, -1);
             }
@@ -189,7 +190,7 @@ impl Drop for PortSet {
 
 fn allocate(right: u32) -> Result<Port> {
     let mut name = 0;
-    // SAFETY: name 指向一个有效可写的 mach_port_name_t。
+    // SAFETY: name points to a valid, writable mach_port_name_t.
     check(
         unsafe { mach_port_allocate(task_self(), right, &mut name) },
         "mach_port_allocate",
@@ -208,8 +209,8 @@ impl ReceiveRight {
             name: allocate(RIGHT_RECEIVE)?,
         };
         let mut limit = 128i32;
-        // SAFETY: flavor=1 要求一个 u32 的 mach_port_limits_t，count=1。
-        // i32 与 SDK natural_t 的尺寸及对齐一致，128 在两种类型中同值。
+        // SAFETY: flavor=1 requires a single-u32 mach_port_limits_t, with count=1.
+        // i32 has the same size and alignment as the SDK's natural_t; 128 has the same value in both types.
         check(
             unsafe { mach_port_set_attributes(task_self(), receive.name, 1, &mut limit, 1) },
             "mach_port_set_attributes",
@@ -218,7 +219,7 @@ impl ReceiveRight {
     }
 
     pub fn make_send(&self) -> Result<SendRight> {
-        // SAFETY: self 借用确保 receive right 存活；MAKE_SEND 创建一个新 send 引用。
+        // SAFETY: Borrowing self keeps the receive right alive; MAKE_SEND creates a new send reference.
         check(
             unsafe { mach_port_insert_right(task_self(), self.name, self.name, TYPE_MAKE_SEND) },
             "mach_port_insert_right",
@@ -229,7 +230,7 @@ impl ReceiveRight {
     fn make_send_once(&self) -> Result<SendOnceRight> {
         let mut name = 0;
         let mut kind = 0;
-        // SAFETY: self 持有 receive；两个输出指针有效。MAKE_SEND_ONCE 不移走 receive。
+        // SAFETY: self owns the receive right; both output pointers are valid. MAKE_SEND_ONCE does not move the receive right.
         check(
             unsafe {
                 mach_port_extract_right(
@@ -261,7 +262,7 @@ impl PortSet {
         })
     }
     pub fn add(&self, receive: &ReceiveRight) -> Result<()> {
-        // SAFETY: 两个对象分别持有本 task 的 port-set 和 receive right。
+        // SAFETY: The two objects own this task's port-set and receive rights, respectively.
         check(
             unsafe { mach_port_move_member(task_self(), receive.name, self.name) },
             "mach_port_move_member",
@@ -281,11 +282,11 @@ impl SendRight {
     }
 
     pub fn try_clone(&self) -> Result<Self> {
-        // SAFETY: +1 新增 send user reference；成功后交给返回的 RAII 对象。
+        // SAFETY: +1 adds a send user reference, transferred to the returned RAII object on success.
         let code = unsafe { mach_port_mod_refs(task_self(), self.name, RIGHT_SEND, 1) };
         if code != 0 {
             let mut kind = 0;
-            // SAFETY: kind 是可写输出；port_type 不取得或释放任何权利。
+            // SAFETY: kind is a writable output; port_type neither acquires nor releases any rights.
             let type_code = unsafe { mach_port_type(task_self(), self.name, &mut kind) };
             if type_code == 0 && kind & PORT_TYPE_DEAD_NAME != 0 {
                 return Err(MachFailure {
@@ -304,14 +305,14 @@ impl SendRight {
     }
 
     pub fn unwatch_dead(&self) -> Result<()> {
-        // MIG 仍要求合法的 send-once disposition，即使 notify 为 MACH_PORT_NULL。
+        // MIG still requires a valid send-once disposition even when notify is MACH_PORT_NULL.
         self.notification(0, TYPE_MAKE_SEND_ONCE)
     }
 
     fn notification(&self, notify: Port, disposition: u32) -> Result<()> {
         let mut previous = 0;
-        // SAFETY: self 拥有 send/dead-name 引用；notify 非零时来自存活 receive right。
-        // 内核取得 MAKE_SEND_ONCE 权利；previous 是返回的独占 send-once 权利。
+        // SAFETY: self owns a send/dead-name reference; a nonzero notify comes from a live receive right.
+        // The kernel acquires the MAKE_SEND_ONCE right; previous is the returned, exclusively owned send-once right.
         let code = unsafe {
             mach_port_request_notification(
                 task_self(),
@@ -335,7 +336,7 @@ impl SendRight {
         reply: ReplyPort<'_>,
         timeout_ms: u32,
     ) -> Result<()> {
-        // 先序列化，避免非法 body 取得任何额外权利。
+        // Serialize first so an invalid body cannot cause any additional rights to be acquired.
         let mut frame = Frame::json(op, request, body)?;
         let reply = match reply {
             ReplyPort::None => None,
@@ -343,8 +344,9 @@ impl SendRight {
             ReplyPort::Once(receive) => Some(ReplyRight::Once(receive.make_send_once()?)),
         };
         let destination = self.try_clone()?;
-        // 将独占引用移入 header。成功由内核消费；失败由 post 销毁返回的 header。
-        // 显式 MOVE 避免借用权利与失败时 pseudo-copyout 权利混淆。
+        // Move the exclusively owned references into the header. The kernel consumes them on success;
+        // post destroys the returned header on failure. Explicit MOVE dispositions avoid confusing
+        // borrowed rights with rights returned by pseudo-copyout on failure.
         frame.header.remote_port = destination.into_raw();
         frame.header.bits = TYPE_MOVE_SEND;
         if let Some(reply) = reply {
@@ -398,8 +400,8 @@ impl ReplyRight {
 
 fn post(mut frame: Frame, timeout_ms: u32) -> Result<()> {
     let size = frame.header.size;
-    // SAFETY: pack(4) 的 header 正确对齐，整个已初始化缓冲区至少 size 字节。
-    // header 仅含移入的独占 send/send-once 权利，不含借用权利或 descriptors。
+    // SAFETY: The pack(4) header is correctly aligned; the fully initialized buffer is at least size bytes long.
+    // The header contains only moved, exclusively owned send/send-once rights, not borrowed rights or descriptors.
     let code = unsafe {
         mach_msg(
             ptr::addr_of_mut!(frame.header),
@@ -412,14 +414,15 @@ fn post(mut frame: Frame, timeout_ms: u32) -> Result<()> {
         )
     };
     if code != 0 {
-        // mach_msg_destroy 按接收布局清理，不处理 local_port。
-        // 发送失败的 local_port 则是本模块拥有的 reply right，必须单独释放。
+        // mach_msg_destroy cleans up using the receive layout and does not handle local_port.
+        // After a failed send, local_port is a reply right owned by this module and must be released separately.
         release_send(frame.header.local_port);
         frame.header.local_port = 0;
         frame.header.bits &= !LOCAL_MASK;
-        // SAFETY: 输入是本模块构建的 simple 消息。失败时 Mach 保留原 header，
-        // 或通过 pseudo-copyout 返回尚未消费的权利。两者均由此 header 独占。
-        // 使用返回后的 header，而不是缓存旧端口名，避免重命名或重复释放。
+        // SAFETY: The input is a simple message constructed by this module. On failure, Mach preserves
+        // the original header or returns unconsumed rights through pseudo-copyout. In either case,
+        // this header exclusively owns them. Use the returned header rather than cached old port names
+        // to account for renaming and avoid double releases.
         unsafe {
             mach_msg_destroy(ptr::addr_of_mut!(frame.header));
         }
@@ -445,7 +448,7 @@ pub enum Event {
     Invalid,
 }
 
-/// 与上游 TCMessage 同为 16500 字节，至少四字节对齐。
+/// Like the upstream TCMessage, this is 16500 bytes and aligned to at least four bytes.
 struct ReceiveBuffer {
     words: [u32; RECEIVE_CAPACITY / 4],
     destroy: bool,
@@ -464,18 +467,18 @@ impl ReceiveBuffer {
     }
 
     fn header(&self) -> Header {
-        // SAFETY: u32 数组四字节对齐，容量超过 Header；全部字节已初始化。
+        // SAFETY: The u32 array is four-byte aligned and larger than Header; all bytes are initialized.
         unsafe { ptr::read(self.words.as_ptr().cast::<Header>()) }
     }
 
     fn bytes(&self) -> &[u8] {
-        // SAFETY: u32 数组的全部字节已初始化；切片只覆盖数组实际容量。
+        // SAFETY: All bytes in the u32 array are initialized; the slice covers only the array's actual capacity.
         unsafe { std::slice::from_raw_parts(self.words.as_ptr().cast(), RECEIVE_CAPACITY) }
     }
 
     fn take_reply(&mut self, kind: u32) -> Option<ReplyRight> {
         let name = self.words[2];
-        // 接收后的 remote_port 是消息携带的 reply right，不是目的 receive right。
+        // After reception, remote_port is the reply right carried by the message, not the destination receive right.
         self.words[2] = 0;
         self.words[0] &= !REMOTE_MASK;
         match kind {
@@ -489,12 +492,12 @@ impl ReceiveBuffer {
 impl Drop for ReceiveBuffer {
     fn drop(&mut self) {
         if self.destroy {
-            // 接收后的 local_port 是借用的目的 receive right，绝不由消息释放。
+            // After reception, local_port is the borrowed destination receive right; the message must never release it.
             self.words[3] = 0;
             self.words[0] &= !LOCAL_MASK;
-            // SAFETY: 只对内核成功接收或 BODY_ERROR 的消息置 destroy=true。
-            // 内核校验 descriptor 布局；take_reply 已清除转交给 RAII 的权利。
-            // 即使协议或 JSON 无效，也仍销毁 header、descriptor 与 OOL 内存。
+            // SAFETY: destroy=true is set only for messages received successfully by the kernel or with BODY_ERROR.
+            // The kernel validates descriptor layouts; take_reply has cleared rights transferred to RAII objects.
+            // The header, descriptors, and OOL memory are still destroyed even if the protocol or JSON is invalid.
             unsafe {
                 mach_msg_destroy(self.header_ptr());
             }
@@ -532,7 +535,7 @@ fn decode_received(buffer: &mut ReceiveBuffer) -> Result<Event> {
             size == DEAD_NAME_MESSAGE_SIZE && header.bits & protocol::COMPLEX == 0,
             "invalid dead-name notification"
         );
-        // 消息 ID 本身可伪造。必须验证内核审计 token，不能按用户提供的名字减引用。
+        // The message ID alone can be forged. Validate the kernel audit token; never decrement references using a user-supplied name.
         ensure!(
             audit.val == [0; 8],
             "dead-name notification is not from kernel"
@@ -545,8 +548,8 @@ fn decode_received(buffer: &mut ReceiveBuffer) -> Result<Event> {
         );
         let dead = protocol::word(buffer.bytes(), 32)?;
         ensure!(valid(dead), "invalid dead-name notification name");
-        // SAFETY: 内核的 DEAD_NAME 通知为 not_port 增加一个额外 dead-name user ref。
-        // 字段为 PORT_NAME，而非 descriptor；mach_msg_destroy 不会释放此额外引用。
+        // SAFETY: The kernel's DEAD_NAME notification adds an extra dead-name user reference to not_port.
+        // The field is a PORT_NAME, not a descriptor; mach_msg_destroy does not release this extra reference.
         check(
             unsafe { mach_port_deallocate(task_self(), dead) },
             "release dead-name notification reference",
@@ -582,8 +585,8 @@ fn decode_received(buffer: &mut ReceiveBuffer) -> Result<Event> {
 pub fn receive(port: Port, timeout_ms: u32) -> Result<Event> {
     ensure!(valid(port), "invalid receive port name");
     let mut buffer = ReceiveBuffer::new();
-    // SAFETY: 缓冲区正确对齐且可写，rcv_size 等于容量。端口名由内核校验。
-    // 不使用 RCV_LARGE：过大消息由内核出队并销毁，不留在队列中阻塞下一条。
+    // SAFETY: The buffer is correctly aligned and writable, and rcv_size equals its capacity. The kernel validates the port name.
+    // RCV_LARGE is not used: the kernel dequeues and destroys oversized messages instead of letting them block the next message.
     let code = unsafe {
         mach_msg(
             buffer.header_ptr(),
@@ -598,13 +601,13 @@ pub fn receive(port: Port, timeout_ms: u32) -> Result<Event> {
     match code & !MSG_ERROR_MASK {
         0 => {
             buffer.destroy = true;
-            // 协议错误不是 syscall 错误；Drop 总会清理内核传入的消息权利。
+            // Protocol errors are not syscall errors; Drop always cleans up message rights delivered by the kernel.
             Ok(decode_received(&mut buffer).unwrap_or(Event::Invalid))
         }
         RCV_TIMED_OUT => Ok(Event::Timeout),
         RCV_TOO_LARGE | RCV_HEADER_ERROR => Ok(Event::Invalid),
         RCV_BODY_ERROR => {
-            // BODY_ERROR 返回已接收且可销毁的部分消息；缺失权利已由内核置空。
+            // BODY_ERROR returns a received partial message that can be destroyed; the kernel has nulled missing rights.
             buffer.destroy = true;
             Ok(Event::Invalid)
         }
@@ -618,8 +621,8 @@ pub fn receive(port: Port, timeout_ms: u32) -> Result<Event> {
 pub fn lookup_service() -> Result<SendRight> {
     let service = std::ffi::CString::new(protocol::SERVICE).expect("constant has no NUL");
     let mut name = 0;
-    // SAFETY: bootstrap_port 由 libSystem 初始化；service 是以 NUL 终止的固定名称。
-    // name 为有效输出指针；成功返回一个本 task 的 send right。
+    // SAFETY: libSystem initializes bootstrap_port; service is a fixed, NUL-terminated name.
+    // name is a valid output pointer; success returns a send right in this task.
     let code = unsafe { bootstrap_look_up(bootstrap_port, service.as_ptr(), &mut name) };
     let right = SendRight { name };
     check(code, "bootstrap_look_up")?;
@@ -627,33 +630,33 @@ pub fn lookup_service() -> Result<SendRight> {
     Ok(right)
 }
 
-/// 只提供实现；离线测试绝不调用此函数。
+/// Provided as an implementation only; offline tests never call this function.
 pub fn register_service(receive: &ReceiveRight) -> Result<()> {
     let service = std::ffi::CString::new(protocol::SERVICE).expect("constant has no NUL");
     let send = receive.make_send()?;
-    // SAFETY: bootstrap_register 的 sp 为 COPY_SEND。send 存活覆盖调用，随后自动释放。
-    // 固定名称以 NUL 终止；不向 bootstrap 转移 receive right。
+    // SAFETY: bootstrap_register's sp uses COPY_SEND. send stays alive throughout the call and is then released automatically.
+    // The fixed name is NUL-terminated; no receive right is transferred to bootstrap.
     check(
         unsafe { bootstrap_register(bootstrap_port, service.as_ptr(), send.name) },
         "bootstrap_register",
     )
 }
 
-/// 获取目标 receive right 的 send 引用；函数返回前释放 task port。
-/// 此入口只接受路径已验证的 tccd，测试绝不调用 task_for_pid。
+/// Acquires a send reference to the target receive right; releases the task port before returning.
+/// This entry point accepts only a path-verified tccd; tests never call task_for_pid.
 pub fn extract_send(pid: i32, target_name: Port) -> Result<SendRight> {
     ensure!(valid(target_name), "invalid target receive name");
     crate::process::verify_tccd(pid)?;
     let mut task = 0;
-    // SAFETY: pid 已验证且输出指针有效；授权及 task 获取仍由系统检查。
+    // SAFETY: pid is verified and the output pointer is valid; the system still checks authorization and task acquisition.
     let code = unsafe { task_for_pid(task_self(), pid, &mut task) };
     let task = SendRight { name: task };
     check(code, "task_for_pid")?;
     ensure!(valid(task.name), "task_for_pid returned invalid task right");
     let mut name = 0;
     let mut kind = 0;
-    // SAFETY: task 是当前作用域拥有的 task control send right。输出指针有效。
-    // MAKE_SEND 不移动目标 receive right；task 的 Drop 在所有返回路径释放 task。
+    // SAFETY: task is a task control send right owned by this scope. The output pointers are valid.
+    // MAKE_SEND does not move the target receive right; task's Drop releases the task on every return path.
     let code = unsafe {
         mach_port_extract_right(task.name, target_name, TYPE_MAKE_SEND, &mut name, &mut kind)
     };
@@ -678,7 +681,7 @@ mod tests {
 
     fn refs(name: Port, right: u32) -> u32 {
         let mut count = 0;
-        // SAFETY: 测试仅查询本进程端口；count 是有效输出指针。
+        // SAFETY: Tests query only ports in this process; count is a valid output pointer.
         check(
             unsafe { mach_port_get_refs(task_self(), name, right, &mut count) },
             "test get refs",
@@ -689,7 +692,7 @@ mod tests {
 
     fn name_exists(name: Port) -> bool {
         let mut kind = 0;
-        // SAFETY: 只查询名称类型；已销毁名称由内核返回错误。
+        // SAFETY: This only queries the name's type; the kernel returns an error for destroyed names.
         unsafe { mach_port_type(task_self(), name, &mut kind) == 0 }
     }
 
@@ -772,7 +775,7 @@ mod tests {
     fn loopback_all_operations_audit_and_timeout() {
         let receive = ReceiveRight::new().unwrap();
         let send = receive.make_send().unwrap();
-        let body = json!({"ok": true, "unicode": "回环", "count": 123});
+        let body = json!({"ok": true, "unicode": "caf\u{e9}", "count": 123});
         for number in (1..=11).chain(std::iter::once(255)) {
             let op = Operation::try_from(number).unwrap();
             send.send(op, u64::MAX - number as u64, &body, ReplyPort::None, 100)
@@ -783,7 +786,7 @@ mod tests {
             assert_eq!(message.request, u64::MAX - number as u64);
             assert_eq!(message.body, body);
             assert_eq!(message.audit.pid(), std::process::id() as i32);
-            // SAFETY: geteuid 只读取本进程身份。
+            // SAFETY: geteuid only reads this process's identity.
             assert_eq!(message.audit.euid(), unsafe { libc::geteuid() });
             assert!(message.audit.pid_version() > 0);
             assert!(message.reply.is_none());
@@ -965,7 +968,7 @@ mod tests {
         assert_eq!(refs(client.name(), RIGHT_SEND), 0);
         assert_eq!(refs(destination.name(), RIGHT_SEND), 1);
         assert_eq!(refs(client.name(), RIGHT_RECEIVE), 1);
-        // 对 MAKE_SEND_ONCE 的显式权利也验证失败清理。
+        // Also verify failure cleanup for explicit rights created with MAKE_SEND_ONCE.
         let error = destination
             .send(
                 Operation::Status,
@@ -977,7 +980,7 @@ mod tests {
             .unwrap_err();
         assert!(is_timeout(&error));
         assert_eq!(refs(destination.name(), RIGHT_SEND), 1);
-        // 放弃 send-once 产生内核 SEND_ONCE 通知；它不是控制协议帧。
+        // Abandoning a send-once right generates a kernel SEND_ONCE notification, not a control protocol frame.
         assert!(matches!(
             super::receive(client.name(), 1000).unwrap(),
             Event::Invalid
@@ -1014,7 +1017,7 @@ mod tests {
         let send = server.make_send().unwrap();
         send.watch_dead(&notifications).unwrap();
         send.unwatch_dead().unwrap();
-        // 释放被取消的通知 send-once right 会发送 SEND_ONCE 通知。
+        // Releasing the canceled notification's send-once right sends a SEND_ONCE notification.
         assert!(matches!(
             super::receive(notifications.name(), 1000).unwrap(),
             Event::Invalid
@@ -1051,7 +1054,7 @@ mod tests {
             ndr: [0; 8],
             name: victim_send.name(),
         };
-        // SAFETY: 本测试构造有效 simple Mach 消息，独占目的 send 引用，缓冲区大小准确。
+        // SAFETY: This test constructs a valid simple Mach message, exclusively owns the destination send reference, and uses an exactly sized buffer.
         let code = unsafe {
             mach_msg(
                 &mut fake.header,
@@ -1064,7 +1067,7 @@ mod tests {
             )
         };
         if code != 0 {
-            // SAFETY: 未发送的有效 simple header 仍拥有目的 send 引用。
+            // SAFETY: The unsent, valid simple header still owns the destination send reference.
             unsafe {
                 mach_msg_destroy(&mut fake.header);
             }
@@ -1116,7 +1119,7 @@ mod tests {
                 kind: 0,
             },
         };
-        // SAFETY: SDK descriptor 布局和总长度已验证；header 与 descriptor 各拥有独占 send 引用。
+        // SAFETY: The SDK descriptor layout and total size are verified; the header and descriptor each exclusively own a send reference.
         let code = unsafe {
             mach_msg(
                 &mut complex.header,
@@ -1129,7 +1132,7 @@ mod tests {
             )
         };
         if code != 0 {
-            // SAFETY: 整个 complex 消息由本测试构建，未发送权利仍由返回 header/descriptors 拥有。
+            // SAFETY: This test constructs the entire complex message; the returned header/descriptors still own unsent rights.
             unsafe {
                 mach_msg_destroy(&mut complex.header);
             }
@@ -1166,7 +1169,7 @@ mod tests {
         let once = target.make_send_once().unwrap();
         let name = once.name();
         drop(target);
-        // 本机内核将发送到已死亡 send-once 目的地视为成功，并消费该权利。
+        // The local kernel treats a send to a dead send-once destination as successful and consumes the right.
         once.send(Operation::Status, 0, &json!({}), 0).unwrap();
         assert!(!name_exists(name));
     }
@@ -1203,7 +1206,7 @@ mod additional_tests {
 
     fn refs(name: Port, right: u32) -> u32 {
         let mut count = 0;
-        // SAFETY: 查询本进程拥有的名称；count 是有效输出指针。
+        // SAFETY: This queries names owned by this process; count is a valid output pointer.
         check(
             unsafe { mach_port_get_refs(task_self(), name, right, &mut count) },
             "test get refs",
@@ -1233,7 +1236,7 @@ mod additional_tests {
             },
             padding: [0; RECEIVE_CAPACITY / 4],
         };
-        // SAFETY: 完整缓冲区四字节对齐；simple header 持有独占目的与 reply send 引用。
+        // SAFETY: The entire buffer is four-byte aligned; the simple header exclusively owns the destination and reply send references.
         let code = unsafe {
             mach_msg(
                 &mut oversized.header,
@@ -1249,7 +1252,7 @@ mod additional_tests {
             release_send(oversized.header.local_port);
             oversized.header.local_port = 0;
             oversized.header.bits &= !LOCAL_MASK;
-            // SAFETY: 未发送的有效 simple header 仍拥有目的 send 引用。
+            // SAFETY: The unsent, valid simple header still owns the destination send reference.
             unsafe {
                 mach_msg_destroy(&mut oversized.header);
             }

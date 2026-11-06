@@ -11,7 +11,7 @@ rust:
 
 native: $(MODULE)
 
-# 先签名临时文件，再原子替换，避免截断已映射的库。
+# Sign the temporary file, then replace atomically to avoid truncating a mapped library.
 $(MODULE): $(MODULE_INPUTS) Makefile
 	@set -eu; \
 	temporary=$$(mktemp .build-module.XXXXXX); \
@@ -29,7 +29,7 @@ check:
 	$(CARGO) clippy --all-targets --locked -- -D warnings
 	$(CARGO) test --locked
 
-# 不终止服务，不改变已加载模块。
+# Do not stop services or alter loaded modules.
 clean:
 	$(CARGO) clean
 	rm -f $(MODULE)

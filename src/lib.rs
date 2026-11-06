@@ -1,6 +1,6 @@
-//! xtcc：开发环境使用的 macOS TCC 控制程序。
+//! xtcc: a macOS TCC control program for development environments.
 //!
-//! 测试只操作本进程创建的资源，不附加或修改系统进程。
+//! Tests use only resources created by their own process and never attach to or modify system processes.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 #[cfg(not(target_os = "macos"))]

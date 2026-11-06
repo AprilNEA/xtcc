@@ -1,91 +1,106 @@
-# xtcc 验证结果
+# xtcc validation results
 
-首版 Rust 控制层已完成构建。
-79 项测试全部通过，未执行真实注入。
-最终验证时间：2026-11-04 07:02，UTC+08:00。
+The initial Rust control layer built successfully.
+All 79 tests passed; no live injection was performed.
+Initial validation completed on November 4, 2026, at 07:02 UTC+08:00.
 
-## 环境
+## English localization regression
 
-- macOS 26.7，构建号 25G229。
-- Apple Silicon，架构 arm64。
-- Rust 1.98.1。
-- Apple Clang 21.0.0，Xcode 27 SDK。
-- Rust 与原生库的最低部署目标均为 macOS 15.0。
+On November 6, 2026, the localized repository passed all 80 tests:
+75 module tests and 5 CLI integration tests. The additional CLI test checks
+English help and error output without invoking control operations.
 
-Cargo 声明最低 Rust 1.85。
-本轮只验证 Rust 1.98.1，未验证最低版本。
+Formatting checks, Clippy with warnings denied, the release build, and signature
+verification for both artifacts passed. CLI help and the read-only doctor
+command were also exercised. No live injection or service startup was performed.
 
-## 已验证
+A scan of the current repository files found no Chinese text or CJK punctuation
+outside `README_CN.md`. Comments and CLI help are English. The Chinese README
+remains available as the explicitly requested translation.
 
-`cargo fmt --check` 通过。
-`cargo clippy --all-targets --locked -- -D warnings` 通过。
-`cargo test --locked --offline` 通过。
-测试包括 75 项模块测试和 4 项 CLI 集成测试。
+## Environment
 
-`make` 成功生成两个产物。
-`target/release/xtcc` 为 arm64 可执行文件。
-`libxtcc_inject.dylib` 为 arm64e 动态库。
-两者均通过 `codesign --verify --strict`。
+- macOS 26.7, build 25G229.
+- Apple Silicon, arm64 architecture.
+- Rust 1.98.1.
+- Apple Clang 21.0.0, Xcode 27 SDK.
+- Minimum deployment target: macOS 15.0 for both Rust and native code.
 
-CLI 帮助、版本和只读 doctor 已运行。
-doctor 的文本和 JSON 输出均正常。
-内嵌 LLDB Python 脚本通过语法检查。
-该脚本没有被执行。
+Cargo declares Rust 1.85 as the minimum supported version.
+Only Rust 1.98.1 was tested; the minimum version was not verified.
 
-## 重点测试
+## Verified
 
-协议测试覆盖消息长度、操作类型与非法输入。
-原生 ABI 夹具使用项目实际的协议头。
-它将 Objective-C 消息布局与 Rust 布局逐项比较。
-测试还逐字节比较相同 JSON 消息的编码。
+`cargo fmt --check` passed.
+`cargo clippy --all-targets --locked -- -D warnings` passed.
+`cargo test --locked --offline` passed.
+The suite included 75 module tests and 4 CLI integration tests.
 
-Mach 测试只创建本进程端口。
-它们覆盖权利转交、引用计数和死亡通知。
-它们还覆盖队列超时、非法消息清理和伪造通知拒绝。
-测试不会查找或注册生产服务。
+`make` successfully produced both build artifacts:
 
-broker 测试覆盖握手、超时和完整性汇总。
-日志测试覆盖容量、字节上限与回放边界。
-订阅测试覆盖慢速读者、缺口和游标推进。
-CLI 测试覆盖参数范围、别名和隐藏命令。
-输出测试覆盖 JSON、过滤和控制字符清理。
+- `target/release/xtcc`: an arm64 executable.
+- `libxtcc_inject.dylib`: an arm64e dynamic library.
 
-## 未验证
+Both passed `codesign --verify --strict`.
 
-真实 LLDB 附加、动态库加载与 readiness 未验证。
-Rust broker 与真实注入端的完整会话未验证。
-跨进程端口提取与生产服务注册未验证。
-真实权限结果和系统服务崩溃恢复未验证。
-跨 macOS 版本兼容性未验证。
-后台 syslog 的系统日志展示未验证。
+CLI help, version output, and the read-only doctor command were exercised.
+Both text and JSON doctor output worked correctly.
+The embedded LLDB Python script passed a syntax check but was not executed.
 
-没有运行 `start` 或 `_serve`。
-没有调用 sudo，没有更改 SIP。
-没有修改 TCC 数据库，也没有发布项目。
+## Key test coverage
 
-## 相对上游的变化
+Protocol tests cover message lengths, operation types, and invalid input.
+The native ABI fixture uses the project's actual protocol header.
+It compares Objective-C and Rust message layouts field by field.
+It also compares the encoded bytes of equivalent JSON messages.
 
-外层 Python 启动器改为 Rust。
-原生 helper 的控制逻辑改为 Rust。
-LLDB 内嵌 Python 仍然保留。
-Objective-C 注入实现只调整命名空间。
-动态库增加稳定的 install name。
+Mach tests create ports only within the test process.
+They cover right transfers, reference counts, and death notifications.
+They also cover queue timeouts, invalid-message cleanup, and rejection of forged notifications.
+Tests do not look up or register the production service.
 
-程序不再自动调用 sudo。
-使用者必须显式决定是否以 root 运行。
-参数校验先于运行时操作。
-新增 doctor，只读检查工具与文件。
+Broker tests cover handshakes, timeouts, and completeness checks in response aggregation.
+Log tests cover entry capacity, byte limits, and replay boundaries.
+Subscription tests cover slow readers, gaps, and cursor advancement.
+CLI tests cover argument ranges, aliases, and hidden commands.
+Output tests cover JSON, filtering, and terminal control-character sanitization.
 
-Mach 权利由 Rust 所有权类型管理。
-握手后的回复固定完整 audit token。
-请求增加连接代次与操作匹配检查。
+## Not verified
 
-broker 生命周期信息改用系统 syslog。
-权限事件仍只进入有界内存缓冲。
-端口提取错误的部分细分诊断尚未保留。
+- Live LLDB attachment, dynamic-library loading, and readiness.
+- Full sessions between the Rust broker and a real injected endpoint.
+- Cross-process port extraction and production service registration.
+- Actual permission outcomes and recovery from system-service crashes.
+- Compatibility across macOS versions.
+- Display of background syslog diagnostics in system logs.
 
-## 分发限制
+Neither `start` nor `_serve` was run.
+No sudo commands were used, and SIP was not changed.
+The TCC database was not modified.
+The project had not been published at the time of the initial validation.
 
-上游固定提交没有 LICENSE 文件。
-本项目保留来源记录，不附加推定许可证。
-公开发布或再分发前，须确认原作者授权。
+## Changes from upstream
+
+The outer Python launcher and native helper control logic were rewritten in Rust.
+LLDB's embedded Python remains in use.
+Only namespace identifiers were changed in the Objective-C injection implementation.
+The dynamic library now has a stable install name.
+
+The program no longer invokes sudo automatically.
+Users must explicitly decide whether to run it as root.
+Argument validation takes place before runtime operations.
+The new doctor command checks tools and files without modifying them.
+
+Rust ownership types manage Mach rights.
+Replies are pinned to the complete audit token after the handshake.
+Requests check connection generations and operation matching.
+
+Broker lifecycle messages use system syslog.
+Permission events remain confined to a bounded in-memory buffer.
+Some detailed port-extraction error diagnostics have not been preserved.
+
+## Distribution restrictions
+
+The fixed upstream commit contains no LICENSE file.
+This project preserves provenance and does not assume or assign an upstream license.
+Confirm authorization from the original author before public release or redistribution.

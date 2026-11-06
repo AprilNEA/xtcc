@@ -1,6 +1,6 @@
-# 此脚本只由 Rust bootstrap 嵌入到 LLDB。
-# pid、library、expected_tccd 由 Rust 以 JSON 字面量提供。
-# LLDB 仍依赖自身的 Python；Rust 不替代 LLDB 的 Python API。
+# This script is embedded in LLDB only by the Rust bootstrap.
+# Rust supplies pid, library, and expected_tccd as JSON literals.
+# LLDB still relies on its own Python runtime; Rust does not replace its Python API.
 import json
 import os
 import stat
@@ -69,7 +69,7 @@ try:
 except Exception as failure:
     print("INJECT_ERROR " + str(failure))
 finally:
-    # 即使路径校验、载入或内存读取失败，也必须脱离有效进程。
+    # Detach from any valid process even if path validation, loading, or memory reads fail.
     if process is not None and process.IsValid():
         detached = process.Detach()
         if detached.Fail():

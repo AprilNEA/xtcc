@@ -1,14 +1,15 @@
-//! 后台 broker 不依赖已关闭的终端；只记录生命周期，不记录权限事件。
+//! The background broker does not rely on a closed terminal; log lifecycle events, not permission events.
 use std::ffi::CString;
 
 fn message(text: &str) -> CString {
-    CString::new(format!("xtcc: {}", text.replace('\0', "?"))).expect("已替换所有 NUL 字节")
+    CString::new(format!("xtcc: {}", text.replace('\0', "?")))
+        .expect("all NUL bytes have been replaced")
 }
 
 pub(crate) fn log(text: &str) {
     let text = message(text);
-    // SAFETY: format 固定且含一个 %s；参数是有效、存活的 NUL 结尾字符串。
-    // syslog 只在本进程同步调用期间读取此指针。
+    // SAFETY: The fixed format contains one %s; its argument is a valid, live NUL-terminated string.
+    // syslog reads this pointer only during the synchronous call in this process.
     unsafe {
         libc::syslog(libc::LOG_NOTICE, c"%s".as_ptr(), text.as_ptr());
     }

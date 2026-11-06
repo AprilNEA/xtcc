@@ -1,4 +1,4 @@
-//! 单线程日志环。保留条目数和编码字节数两种限制。
+//! Single-threaded log ring bounded by both entry count and encoded byte size.
 
 use crate::protocol::MAX_BODY;
 use serde::Serialize;
@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 pub const MAX_CAPACITY: usize = 65_536;
 pub const BYTE_LIMIT: usize = 8 * 1024 * 1024;
 
-/// 来源字段由 broker 从 audit token 取得，不信任日志载荷。
+/// The broker derives source fields from the audit token rather than trusting the log payload.
 #[derive(Debug, Clone, Serialize)]
 pub struct LogRecord {
     #[serde(rename = "type")]
@@ -39,7 +39,7 @@ pub struct LogRing {
 }
 
 impl LogRing {
-    /// 调用端校验容量。零容量仍可用于离线测试。
+    /// The caller validates capacity. Zero capacity remains available for offline tests.
     pub fn new(capacity: usize, byte_limit: usize) -> Self {
         Self {
             entries: VecDeque::new(),
@@ -84,7 +84,7 @@ impl LogRing {
         })
     }
 
-    /// 拒绝的条目不占用序号，也不驱逐已有条目。
+    /// Rejected entries neither consume sequence numbers nor evict existing entries.
     pub fn append(&mut self, record: &LogRecord) -> Option<&LogEntry> {
         self.append_value(serde_json::to_value(record).ok()?)
     }

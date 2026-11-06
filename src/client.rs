@@ -1,4 +1,4 @@
-//! Mach 客户端与终端输出。此模块不会启动 broker 或自动提权。
+//! Mach client and terminal output. This module neither starts the broker nor elevates privileges.
 
 use crate::mach::{self, Event, Message, ReceiveRight, ReplyPort, SendRight};
 use crate::protocol::{AuditToken, Operation, MAX_BODY};
@@ -32,7 +32,7 @@ pub fn exit_code(error: &anyhow::Error) -> i32 {
     error.downcast_ref::<ClientError>().map_or(1, |e| e.code)
 }
 
-/// JSON 始终写入 stdout。普通错误始终写入 stderr。
+/// JSON always goes to stdout. Plain-text errors always go to stderr.
 pub fn print_error(name: &str, code: i32, json_output: bool) -> Result<i32> {
     if json_output {
         write_json(&json!({"ok": false, "error": name}))?;
@@ -59,7 +59,7 @@ struct Session {
 }
 impl Session {
     fn open(operation: Operation, body: &Value) -> Result<Self> {
-        // 编码和长度校验必须发生在创建端口之前。
+        // Encoding and length validation must precede port creation.
         if !body.is_object() {
             return Err(failure("invalid_request", EX_USAGE));
         }
@@ -107,7 +107,7 @@ impl Session {
 }
 impl Drop for Session {
     fn drop(&mut self) {
-        // 先取消通知，再释放 send / receive rights。
+        // Cancel notifications before releasing send/receive rights.
         let _ = self.server.unwatch_dead();
     }
 }
@@ -147,7 +147,7 @@ fn validate_reply(
     Ok(())
 }
 
-/// Bootstrap 使用不打印的单次 RPC。失败保留客户端退出码。
+/// Bootstrap uses a silent, single-request RPC. Failures preserve the client exit code.
 pub fn request(operation: Operation, body: Value) -> Result<Value> {
     if operation == Operation::Subscribe {
         return Err(failure("stream_requires_exchange", EX_USAGE));
@@ -181,7 +181,7 @@ fn exchange_inner(
     json_output: bool,
 ) -> Result<i32> {
     let streaming = operation == Operation::Subscribe;
-    // Session 先校验请求。非法请求不能修改 SIGINT 处理函数。
+    // Session validates the request first. Invalid requests must not change the SIGINT handler.
     let session = Session::open(operation, &body)?;
     let _interrupt = if streaming {
         Some(InterruptGuard::new()?)
@@ -227,7 +227,7 @@ struct InterruptGuard(libc::sigaction);
 impl InterruptGuard {
     fn new() -> Result<Self> {
         INTERRUPTED.store(false, Ordering::Relaxed);
-        // 只在交互式日志流中安装。Drop 恢复调用者的处理函数。
+        // Install only for interactive log streaming. Drop restores the caller's handler.
         unsafe {
             let mut action: libc::sigaction = std::mem::zeroed();
             let mut previous: libc::sigaction = std::mem::zeroed();
@@ -313,7 +313,7 @@ fn has_error(reply: &Value) -> bool {
     reply.get("error").is_some_and(|v| !v.is_null())
 }
 
-/// 时间保留本地时区与三位毫秒。不会更改进程 TZ。
+/// Keep the local time zone and millisecond precision without changing the process TZ.
 fn timestamp(value: &Value) -> String {
     let Some(seconds) = value
         .as_f64()
@@ -388,8 +388,8 @@ fn permission_label(value: &Value) -> String {
     format!("{name} [{service}]")
 }
 
-/// 默认只过滤 responsible.identifier 的 com.apple. 前缀。
-/// JSON 与文本共用此规则；其他角色不影响过滤。
+/// By default, filter only the com.apple. prefix in responsible.identifier.
+/// JSON and text share this rule; other roles do not affect filtering.
 pub fn visible_log(reply: &Value, all: bool) -> bool {
     all || reply["type"].as_str() != Some("record")
         || !reply["record"]["responsible"]["identifier"]

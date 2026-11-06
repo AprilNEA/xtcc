@@ -1,4 +1,4 @@
-//! 参数解析必须完整结束，才能检查 root 或执行构建、RPC、附加。
+//! Argument parsing must finish before checking for root or building, making RPCs, or attaching.
 
 use crate::protocol::{Connection, Operation, MAX_BODY};
 use crate::{bootstrap, broker, client, process};
@@ -20,11 +20,15 @@ struct Connections(Vec<Connection>);
 #[command(
     name = "xtcc",
     version,
-    about = "本地 TCC 研究控制程序；不会自动 sudo",
-    long_about = "本地 TCC 研究控制程序。运行命令要求 root，但程序不会自动 sudo。\nLLDB 内部仍依赖 Python。doctor 只读检查文件，不探测权限或附加进程。"
+    about = "Local TCC research controller; never invokes sudo automatically",
+    long_about = "Local TCC research controller. Runtime commands require root, but the program never invokes sudo automatically.\nLLDB still depends on embedded Python. doctor only checks files in read-only mode; it does not probe privileges or attach to processes."
 )]
 struct Cli {
-    #[arg(long, global = true, help = "输出 JSON；日志使用逐行 JSON")]
+    #[arg(
+        long,
+        global = true,
+        help = "Output JSON; logs use newline-delimited JSON"
+    )]
     json: bool,
     #[command(subcommand)]
     command: Command,
@@ -32,28 +36,36 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    #[command(about = "构建本地原生库和控制程序")]
+    #[command(about = "Build the local native library and controller")]
     Build {
         #[arg(long)]
         force: bool,
     },
-    #[command(visible_alias = "enable", about = "启用或续期；默认 30 分钟")]
+    #[command(
+        visible_alias = "enable",
+        about = "Enable or renew; defaults to 30 minutes"
+    )]
     Start {
         #[arg(default_value = "30", value_parser = parse_minutes)]
         minutes: u32,
     },
-    #[command(visible_alias = "disable", about = "停用现有 bypass")]
+    #[command(visible_alias = "disable", about = "Disable the existing bypass")]
     Stop,
-    #[command(about = "查询全部已连接 tccd 的新鲜状态")]
+    #[command(about = "Query the latest status of all connected tccd processes")]
     Status,
-    #[command(about = "回放日志并跟随；默认过滤 Apple responsible 进程")]
+    #[command(about = "Replay and follow logs; filter out Apple responsible processes by default")]
     Logs {
-        #[arg(long, help = "只读取当前快照")]
+        #[arg(long, help = "Read only the current snapshot")]
         snapshot: bool,
-        #[arg(long, help = "包含 responsible.identifier 以 com.apple. 开头的日志")]
+        #[arg(
+            long,
+            help = "Include logs whose responsible.identifier starts with com.apple."
+        )]
         all: bool,
     },
-    #[command(about = "只读检查工具位置和构建产物；不要求 root")]
+    #[command(
+        about = "Check tool locations and build artifacts in read-only mode; root is not required"
+    )]
     Doctor,
     #[command(name = "_serve", hide = true)]
     Serve {
@@ -97,7 +109,7 @@ fn parse_connections(value: &str) -> std::result::Result<Connections, String> {
         .as_array()
         .filter(|a| !a.is_empty())
         .ok_or_else(invalid)?;
-    // 附加请求也必须能装入 wire body。先校验，再执行任何 RPC。
+    // Attach requests must also fit in the wire body. Validate before making any RPCs.
     let body = json!({"connections": parsed});
     if serde_json::to_vec(&body).map_err(|_| invalid())?.len() > MAX_BODY {
         return Err(invalid());
@@ -167,7 +179,7 @@ fn require_root(json_output: bool) -> Result<Option<i32>> {
     Ok(None)
 }
 fn dispatch(cli: Cli) -> Result<i32> {
-    // clap value parsers 已校验全部参数。此处才允许副作用。
+    // clap value parsers have validated all arguments. Side effects are allowed only from here on.
     let json_output = cli.json || matches!(cli.command, Command::Attach { .. });
     if !matches!(cli.command, Command::Build { .. } | Command::Doctor) {
         if let Some(code) = require_root(json_output)? {
@@ -267,7 +279,7 @@ fn find_tool(name: &str, fixed: &[PathBuf]) -> Option<PathBuf> {
     paths.into_iter().find(|p| executable_file(p))
 }
 
-/// 不运行工具、不检查 SIP、不查询 TCC、不发现或附加 tccd。
+/// Does not run tools, check SIP, query TCC, or discover or attach to tccd processes.
 fn doctor(json_output: bool) -> Result<i32> {
     let mut developer_dirs = vec![
         PathBuf::from("/Library/Developer/CommandLineTools"),

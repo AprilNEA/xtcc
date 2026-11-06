@@ -1,4 +1,4 @@
-// 此夹具只编码内存数据，不分配端口，不附加任何进程。
+// This fixture only encodes in-memory data; it allocates no ports and attaches to no processes.
 #import <Foundation/Foundation.h>
 #import "../native/ControlProtocol.h"
 #include <stdio.h>

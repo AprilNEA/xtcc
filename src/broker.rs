@@ -1,5 +1,5 @@
-//! 所有可变状态只由一个 Mach 事件循环修改。
-//! 待处理请求仅保存连接标识，不延长已断开的端口生命周期。
+//! A single Mach event loop owns all mutable state.
+//! Pending requests retain connection identifiers without extending disconnected port lifetimes.
 
 use crate::mach::{
     self, Event, Message, PortSet, ReceiveRight, ReplyPort, ReplyRight, SendOnceRight, SendRight,
@@ -69,7 +69,7 @@ struct Peer {
 
 impl Drop for Peer {
     fn drop(&mut self) {
-        // 先取消通知，再让拥有的 send/receive right 自动释放。
+        // Cancel notifications before the owned send/receive rights are released automatically.
         let _ = self.send.unwatch_dead();
     }
 }
@@ -110,7 +110,7 @@ impl RequestState {
     }
 
     fn record(&mut self, peer: PeerKey, operation: Operation, body: Value) {
-        // 同一个 PID 的新连接不能回复旧连接的请求。
+        // A new connection for the same PID cannot answer requests from the previous connection.
         if !self.peers.contains(&peer) {
             return;
         }
@@ -213,7 +213,7 @@ impl RequestState {
 
 struct PendingRequest {
     state: RequestState,
-    // send(self, ...) 消费此 right。取消请求也会自动释放它。
+    // send(self, ...) consumes this right. Cancelling a request also releases it automatically.
     reply: SendOnceRight,
 }
 
@@ -251,7 +251,7 @@ impl SubscriptionState {
         }
     }
 
-    /// 这里只准备帧。投递成功前不移动游标。
+    /// Prepare the frame only; do not advance the cursor until delivery succeeds.
     fn next(&self, ring: &LogRing, session: &str, oversized: u64) -> Option<Delivery> {
         let (operation, request, body, advance) = if !self.began {
             (
@@ -305,7 +305,7 @@ impl SubscriptionState {
         })
     }
 
-    /// 返回 true 时，快照订阅已经完成，应释放 send right。
+    /// A true return value means the snapshot subscription is complete and its send right should be released.
     fn delivered(&mut self, advance: Advance) -> bool {
         match advance {
             Advance::Begin => self.began = true,
@@ -377,7 +377,7 @@ impl Broker {
             return Err("target_is_not_tccd");
         }
         if self.peers.contains_key(&connection.pid) {
-            return Ok(()); // 重复启动不重置握手或 audit token。
+            return Ok(()); // Repeated starts do not reset the handshake or audit token.
         }
         let next_peer = self.next_peer.checked_add(1).ok_or("connection_limit")?;
         let send = mach::extract_send(connection.pid, connection.receive)
@@ -423,12 +423,12 @@ impl Broker {
                 request.state.disconnected(peer.key, reason);
             }
             crate::lifecycle::log(&format!("tccd disconnected pid={pid} reason={reason}"));
-            // peer 的 Drop 取消死亡通知，随后释放两个端口。
+            // Peer::drop cancels death notifications before releasing both ports.
         }
     }
 
     fn handle_death(&mut self, name: u32) {
-        // receive() 已释放通知额外添加的 dead-name 引用。
+        // receive() has already released the extra dead-name reference added by the notification.
         if self.subscribers.remove(&name).is_some() {
             return;
         }
@@ -484,7 +484,7 @@ impl Broker {
 
     fn handle_client(&mut self, mut message: Message) {
         if message.operation == Operation::Subscribe {
-            // 不接受 send-once 流，也不把 send right 当作单次回复。
+            // Reject send-once rights for streams and send rights for single replies.
             let Some(ReplyRight::Send(send)) = message.reply.take() else {
                 return;
             };
@@ -499,7 +499,7 @@ impl Broker {
                 end_stream(&send, "error", "too_many_subscribers");
                 return;
             }
-            // 先销毁旧订阅，避免它取消新订阅的死亡通知。
+            // Drop the old subscription first so it cannot cancel the new death notification.
             self.subscribers.remove(&send.name());
             if send.watch_dead(&self.notifications).is_err() {
                 end_stream(&send, "error", "death_watch_failed");
@@ -606,7 +606,7 @@ impl Broker {
                 .state
                 .record(peer.key, message.operation, message.body);
         }
-        // message 中未使用的 reply right 在此自动释放。
+        // Any unused reply right in the message is released automatically here.
     }
 
     fn finish_requests(&mut self, now: Instant) {
@@ -661,7 +661,7 @@ impl Broker {
                             if mach::is_invalid_destination(&error) {
                                 remove = true;
                             }
-                            // 队列满、超时和其他错误都不推进游标。
+                            // A full queue, timeout, or other error must not advance the cursor.
                             break;
                         }
                     }
@@ -722,7 +722,7 @@ impl Broker {
     }
 }
 
-/// 注册服务并运行。离线测试不会调用此函数。
+/// Register and run the service. Offline tests do not call this function.
 pub fn run(connections: Vec<Connection>, capacity: usize) -> Result<()> {
     if !(1..=MAX_CAPACITY).contains(&capacity) {
         bail!("capacity must be in 1..={MAX_CAPACITY}");
@@ -742,7 +742,7 @@ pub fn run(connections: Vec<Connection>, capacity: usize) -> Result<()> {
     }
     crate::lifecycle::log("broker ready");
     let result = broker.event_loop();
-    // receive 失败同样走退出路径，不能遗留订阅和单次回复。
+    // Receive failures also follow the shutdown path to clean up subscriptions and one-shot replies.
     broker.shutdown();
     crate::lifecycle::log("broker stopped");
     result
@@ -770,7 +770,7 @@ fn end_stream(send: &SendRight, field: &str, reason: &str) {
     let _ = send.send(Operation::StreamEnd, 0, &body, ReplyPort::None, 0);
 }
 
-// 保留 Foundation 的 boolValue 对布尔值、数值和字符串的处理。
+// Preserve Foundation boolValue behavior for booleans, numbers, and strings.
 fn bool_value(value: &Value) -> bool {
     match value {
         Value::Bool(value) => *value,
@@ -1085,7 +1085,7 @@ mod tests {
         for _ in 0..DELIVERY_BUDGET {
             state.delivered(next(&state, &ring).advance);
         }
-        // 一帧 begin 加七条记录。
+        // One begin frame plus seven records.
         assert_eq!(state.cursor, 8);
         assert!(!state.replay_ended);
         assert_eq!(REQUEST_LIMIT, 64);

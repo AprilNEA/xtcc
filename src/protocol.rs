@@ -1,5 +1,5 @@
-//! 控制协议与上游 `native/ControlProtocol.h` 共用 wire ABI。
-//! Mach 端口名称只在拥有它的 task 中有效。
+//! The control protocol shares its wire ABI with upstream `native/ControlProtocol.h`.
+//! Mach port names are valid only within the task that owns them.
 
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -52,7 +52,7 @@ impl TryFrom<u32> for Operation {
     }
 }
 
-/// 保留全部八个字段；使用 SDK 的 libbsm 解释身份字段。
+/// Preserve all eight fields; use the SDK libbsm functions to interpret identity fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct AuditToken {
@@ -68,17 +68,17 @@ extern "C" {
 
 impl AuditToken {
     pub fn pid(self) -> i32 {
-        // SAFETY: AuditToken 与 SDK 的 audit_token_t 布局一致，参数按值传入。
+        // SAFETY: AuditToken matches the SDK audit_token_t layout and is passed by value.
         unsafe { audit_token_to_pid(self) }
     }
 
     pub fn euid(self) -> u32 {
-        // SAFETY: 此 token 完整包含 SDK 要求的八个 u32 字段。
+        // SAFETY: This token contains all eight u32 fields required by the SDK.
         unsafe { audit_token_to_euid(self) }
     }
 
     pub fn pid_version(self) -> u32 {
-        // SAFETY: ABI 同 audit_token_t。转换保留 pidversion 的全部位。
+        // SAFETY: The ABI matches audit_token_t. The cast preserves every bit of pidversion.
         unsafe { audit_token_to_pidversion(self) as u32 }
     }
 }
@@ -89,7 +89,7 @@ pub struct Connection {
     pub receive: u32,
 }
 
-/// SDK 的用户态 mach_msg_header_t：24 字节，四字节对齐。
+/// The SDK userspace mach_msg_header_t: 24 bytes with four-byte alignment.
 #[derive(Debug, Default, Clone, Copy)]
 #[repr(C)]
 pub(crate) struct Header {
@@ -101,7 +101,7 @@ pub(crate) struct Header {
     pub id: i32,
 }
 
-/// 不使用 Rust 默认的 u64 对齐规则。
+/// Do not use Rust's default u64 alignment.
 #[repr(C, packed(4))]
 pub(crate) struct Frame {
     pub header: Header,
@@ -173,7 +173,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Decoded> {
     ensure!(bytes.len() >= size, "truncated message body");
     let request = u64::from_ne_bytes(bytes[40..48].try_into().expect("eight-byte slice"));
     let body = &bytes[BODY_OFFSET..BODY_OFFSET + length];
-    // 上游允许 Hello 的空 body；这是唯一不要求 JSON 的操作。
+    // Upstream allows an empty Hello body; this is the only operation that does not require JSON.
     let body = if body.is_empty() && operation == Operation::Hello {
         Value::Object(Default::default())
     } else {
@@ -192,7 +192,7 @@ mod tests {
     use std::mem::{align_of, offset_of, size_of};
 
     fn wire(frame: &Frame) -> Vec<u8> {
-        // SAFETY: Frame 所有字节均已初始化；pack(4) 布局不存在未初始化 padding。
+        // SAFETY: All Frame bytes are initialized; the pack(4) layout has no uninitialized padding.
         unsafe {
             std::slice::from_raw_parts((frame as *const Frame).cast::<u8>(), size_of::<Frame>())
                 .to_vec()
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn sdk_pack_four_layout() {
-        // Xcode 27 SDK 上的小 C 程序验证了这些 sizeof/offsetof。
+        // A small C program verified these sizeof/offsetof values against the Xcode 27 SDK.
         assert_eq!(size_of::<Header>(), 24);
         assert_eq!(align_of::<Header>(), 4);
         assert_eq!(align_of::<Frame>(), 4);

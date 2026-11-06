@@ -1,5 +1,5 @@
-//! Rust 仅调度 LLDB。LLDB 内部仍依赖 Python。
-//! 离线测试不得调用 ensure_broker / inject / spawn_broker。
+//! Rust only orchestrates LLDB, which still depends on its embedded Python runtime.
+//! Offline tests must not call ensure_broker, inject, or spawn_broker.
 
 use crate::protocol::{Connection, Operation};
 use crate::{client, process};
@@ -37,8 +37,8 @@ fn validate_library(path: &Path) -> Result<PathBuf> {
     Ok(canonical)
 }
 
-/// 优先 XTCC_LIBRARY，其次可执行文件旁，最后项目根。
-/// 显式环境覆盖无效时必须失败，不能静默退回其他库。
+/// Resolve XTCC_LIBRARY first, then the executable directory, then the project root.
+/// An invalid explicit environment override must fail rather than fall back to another library.
 pub fn resolve_library() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("XTCC_LIBRARY") {
         if path.is_empty() {
@@ -72,8 +72,8 @@ fn healthy(reply: &Value) -> bool {
         && reply["acknowledged"].as_u64() == Some(connected)
 }
 
-/// 先使用 broker 的新鲜 Status。只有缺失或明确陈旧才载入库。
-/// 错误、超时或未认证回复不触发新的进程附加。
+/// Request fresh broker status first. Load the library only if the broker is missing or explicitly stale.
+/// Errors, timeouts, and unauthenticated replies must not trigger a new process attachment.
 pub fn ensure_broker() -> Result<Value> {
     process::require_root()?;
     match client::request(Operation::Status, json!({})) {
@@ -150,8 +150,8 @@ fn inject(pid: i32, library: &Path) -> Result<Connection> {
             "quit",
         ])
         .output();
-    // LLDB 已退出后才执行 job-control 清理。载入失败同样执行。
-    // 必须再次验证真实路径，不能给复用 PID 的其他进程发送 SIGCONT。
+    // Perform job-control cleanup only after LLDB exits, including when loading fails.
+    // Revalidate the actual path to avoid sending SIGCONT to another process that reused the PID.
     let cleanup = resume_after_detach(pid);
     let output = match (output, cleanup) {
         (Ok(output), Ok(())) => output,
@@ -239,7 +239,7 @@ struct StartingChild {
 impl Drop for StartingChild {
     fn drop(&mut self) {
         if !self.ready {
-            // 仅清理本次创建但未就绪的 child；不停止复用的 broker。
+            // Clean up only the child created here that failed to become ready, not a reused broker.
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
@@ -254,7 +254,7 @@ fn spawn_broker(connections: &[Connection]) -> Result<StartingChild> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    // 与上游 start_new_session=True 相同。不执行 shell，不自动 sudo。
+    // Equivalent to upstream start_new_session=True. No shell or automatic sudo invocation.
     unsafe {
         command.pre_exec(|| {
             if libc::setsid() == -1 {
