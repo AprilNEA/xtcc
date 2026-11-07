@@ -139,7 +139,9 @@ fn doctor_reports_embedded_libraries_without_external_dylibs() {
     assert_eq!(record["ok"], true);
     for key in ["library", "ne_library"] {
         assert_eq!(record["files"][key]["embedded"], true, "{key}");
-        assert!(record["files"][key]["bytes"].as_u64().unwrap_or(0) > 0, "{key}");
+        assert!(
+            record["files"][key]["bytes"].as_u64().unwrap_or(0) > 0,
+            "{key}"
+        );
     }
 }
-

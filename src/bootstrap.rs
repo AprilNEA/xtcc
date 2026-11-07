@@ -15,8 +15,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const RUNTIME_DIR: &str = "/private/var/run/xtcc";
-const TCC_LIBRARY_BYTES: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/libxtcc_inject.dylib"));
+const TCC_LIBRARY_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libxtcc_inject.dylib"));
 const NE_LIBRARY_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libxtcc_ne.dylib"));
 const LLDB_SCRIPT: &str = include_str!("../native/lldb_bootstrap.py");
 
@@ -59,7 +58,9 @@ impl NativeLibrary {
             .recursive(true)
             .mode(0o755)
             .create(directory)
-            .with_context(|| format!("could not create runtime directory {}", directory.display()))?;
+            .with_context(|| {
+                format!("could not create runtime directory {}", directory.display())
+            })?;
         fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).with_context(|| {
             format!(
                 "could not set permissions on runtime directory {}",
@@ -426,10 +427,7 @@ mod tests {
             .as_nanos();
         let directory =
             std::env::temp_dir().join(format!("xtcc-embed-{}-{nonce}", std::process::id()));
-        for library in [
-            NativeLibrary::TccInject,
-            NativeLibrary::NetworkExtension,
-        ] {
+        for library in [NativeLibrary::TccInject, NativeLibrary::NetworkExtension] {
             assert!(library.bytes().starts_with(MACHO_64_MAGIC));
             let first = library.materialize_in(&directory).unwrap();
             let second = library.materialize_in(&directory).unwrap();
