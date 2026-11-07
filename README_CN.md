@@ -20,7 +20,9 @@ sudo install -m 0755 target/release/xtcc /usr/local/bin/xtcc
 xtcc doctor
 ```
 
-`xtcc doctor` 仅以只读方式检查外部工具路径与内嵌载荷状态，无需 `root` 权限，不会写出动态库或附加系统进程。
+`xtcc doctor` 仅检查运行时工具路径（`xcrun` 与 LLDB）及内嵌载荷，不要求安装 Rust、Cargo、`make` 或编译器。检查以只读方式运行，无需 `root` 权限，不会写出动态库或附加系统进程。
+
+运行目录与释放后的动态库权限均为 `0755`，不受调用进程的 `umask` 影响。
 
 ## 绕过 TCC 检查
 
@@ -114,8 +116,8 @@ sudo xtcc ne disconnect "$VPN_UUID"
 
 | 命令 | 说明 |
 | --- | --- |
-| `build [--force]` | 调用 `make` 构建内嵌原生载荷的单文件 `xtcc`。 |
-| `doctor` | 只读检查工具路径与内嵌原生载荷，无需 `root` 权限。 |
+| `build [--force]` | 调用 `make` 构建内嵌原生载荷的单文件 `xtcc`，要求原始源码目录仍然存在。 |
+| `doctor` | 只读检查运行时工具路径与内嵌原生载荷，无需 `root` 权限。 |
 | `start [minutes]` | 启动或续期 TCC 绕过会话（1 分钟～1440 分钟，默认 30 分钟）。别名：`enable`。 |
 | `stop` | 停止 TCC 绕过，不卸载 `libxtcc_inject.dylib`。别名：`disable`。 |
 | `status` | 查询已连接的 `tccd` 进程、绕过状态、到期时间与日志计数。 |
@@ -161,7 +163,8 @@ make check
 ```
 
 - **单文件构建**：`make` 执行 `cargo build --release --locked`，由 `build.rs` 编译并 ad-hoc 签名 `libxtcc_inject.dylib` 与 `libxtcc_ne.dylib`，最终内嵌生成单一可执行文件 `target/release/xtcc`。若 Cargo 不在默认路径 `$HOME/.cargo/bin/cargo`，可以执行 `make CARGO=/path/to/cargo`。
-- **运行离线检查**：`make check` 运行格式检查、Clippy 与离线测试（覆盖协议编码、原生 ABI 布局、内嵌动态库释放、Mach 端口所有权、broker 状态、日志缓冲与 CLI 输出）。Mach 回环测试仅使用测试进程自建端口，不会附加 `tccd` 或修改系统权限。
+- **强制重新构建**：`make rebuild` 或 `xtcc build --force` 仅清理 `xtcc` 的 release 产物，然后重新构建可执行文件和两个原生库，保留依赖缓存与 debug 产物。
+- **运行离线检查**：`make check` 运行格式检查、Clippy 与离线测试（覆盖协议编码、原生 ABI 布局、内嵌动态库释放、强制构建、Mach 端口所有权、broker 状态、日志缓冲与 CLI 输出）。构建回归测试使用隔离的临时产物目录。Mach 回环测试仅使用测试进程自建端口，不会附加 `tccd` 或修改系统权限。
 - **持续集成检查**：[源码检查工作流](.github/workflows/source-checks.yml)负责检查 Rust 格式、Python 语法及除 `README_CN.md` 外的英文文本规范。
 
 ## 致谢与许可

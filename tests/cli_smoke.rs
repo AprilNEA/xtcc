@@ -1,5 +1,7 @@
-//! Exercise only help, version, and invalid commands; never invoke control operations.
+//! Exercise parsing, diagnostics, and isolated builds; never invoke control operations.
+use std::fs;
 use std::process::Command;
+use xtcc::bootstrap::NativeLibrary;
 
 fn output(arguments: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_xtcc"))
@@ -133,15 +135,80 @@ fn network_extension_arguments_fail_before_runtime_operations() {
 
 #[test]
 fn doctor_reports_embedded_libraries_without_external_dylibs() {
-    let result = output(&["doctor", "--json"]);
+    let home = tempfile::tempdir().unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_xtcc"))
+        .args(["doctor", "--json"])
+        .env("HOME", home.path())
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .output()
+        .unwrap();
     assert!(result.status.success(), "{:?}", result);
     let record: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(record["ok"], true);
+    for name in ["xcrun", "lldb"] {
+        assert!(record["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == name && tool["found"] == true));
+    }
     for key in ["library", "ne_library"] {
         assert_eq!(record["files"][key]["embedded"], true, "{key}");
         assert!(
             record["files"][key]["bytes"].as_u64().unwrap_or(0) > 0,
             "{key}"
         );
+    }
+}
+
+#[test]
+fn forced_build_regenerates_embedded_native_libraries() {
+    let temporary = tempfile::tempdir().unwrap();
+    let target = temporary.path().join("target");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_xtcc"));
+    command
+        .args(["build", "--json"])
+        .env("CARGO", env!("CARGO"))
+        .env("CARGO_TARGET_DIR", &target)
+        .env("CARGO_NET_OFFLINE", "true");
+    let initial = command.output().unwrap();
+    assert!(initial.status.success(), "{initial:?}");
+
+    let libraries = [
+        ("library", NativeLibrary::TccInject),
+        ("ne_library", NativeLibrary::NetworkExtension),
+    ];
+    let native_output = fs::read_dir(target.join("release/build"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path().join("out"))
+        .find(|directory| {
+            libraries
+                .iter()
+                .all(|(_, library)| directory.join(library.file_name()).is_file())
+        })
+        .expect("the build must produce both native libraries");
+    for (_, library) in libraries {
+        fs::write(
+            native_output.join(library.file_name()),
+            b"outdated native payload",
+        )
+        .unwrap();
+    }
+
+    let rebuilt = command.arg("--force").output().unwrap();
+    assert!(rebuilt.status.success(), "{rebuilt:?}");
+    let doctor = Command::new(target.join("release/xtcc"))
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+    assert!(doctor.status.success(), "{doctor:?}");
+    let record: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    for (key, library) in libraries {
+        let bytes = fs::read(native_output.join(library.file_name())).unwrap();
+        assert!(
+            bytes.starts_with(&[0xCF, 0xFA, 0xED, 0xFE]),
+            "{key} was not rebuilt"
+        );
+        assert_eq!(record["files"][key]["bytes"], bytes.len());
     }
 }

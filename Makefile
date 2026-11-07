@@ -1,4 +1,4 @@
-.PHONY: all rust check clean
+.PHONY: all rust rebuild check clean
 
 CARGO ?= $(HOME)/.cargo/bin/cargo
 
@@ -6,6 +6,10 @@ all: rust
 
 rust:
 	$(CARGO) build --release --locked
+
+rebuild:
+	$(CARGO) clean --release --package xtcc
+	$(MAKE) rust
 
 check:
 	$(CARGO) fmt --check

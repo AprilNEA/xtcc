@@ -22,7 +22,9 @@ sudo install -m 0755 target/release/xtcc /usr/local/bin/xtcc
 xtcc doctor
 ```
 
-`xtcc doctor` runs in read-only mode without `root` privileges, library extraction, or process attachment.
+`xtcc doctor` checks runtime tool paths (`xcrun` and LLDB) and embedded payloads; Rust, Cargo, `make`, and a compiler are not required. The check is read-only and requires neither `root` privileges nor library extraction or process attachment.
+
+The runtime directory and extracted libraries use permissions `0755`, independent of the caller's `umask`.
 
 ## TCC Bypass
 
@@ -116,8 +118,8 @@ sudo xtcc ne disconnect "$VPN_UUID"
 
 | Command | Description |
 | --- | --- |
-| `build [--force]` | Build the standalone CLI with embedded native libraries via `make`. |
-| `doctor` | Check tool paths and embedded native libraries in read-only mode without root. |
+| `build [--force]` | Build the standalone CLI with embedded native libraries via `make`; requires the original source checkout. |
+| `doctor` | Check runtime tool paths and embedded native libraries in read-only mode without root. |
 | `start [minutes]` | Enable or renew a TCC bypass session (`1`–`1440`, default `30`). Alias: `enable`. |
 | `stop` | Disable the active TCC bypass without unloading `libxtcc_inject.dylib`. Alias: `disable`. |
 | `status` | Show connected `tccd` processes, bypass state, expiration, and log counts. |
@@ -161,7 +163,8 @@ make check
 ```
 
 - **`make`:** runs `cargo build --release --locked`. `build.rs` compiles and ad-hoc-signs both `arm64e` native libraries (`libxtcc_inject.dylib` and `libxtcc_ne.dylib`) and embeds them into `target/release/xtcc`. Override Cargo with `make CARGO=/path/to/cargo` if Cargo is not at `$HOME/.cargo/bin/cargo`.
-- **`make check`:** runs `cargo fmt --check`, Clippy, and the offline test suite (protocol encoding, native ABI compatibility, embedded library materialization, Mach right ownership, broker state, log buffering, and CLI output). Loopback tests use local test ports only and never attach to `tccd` or alter system permissions.
+- **`make rebuild` / `xtcc build --force`:** clears only `xtcc` release artifacts before rebuilding the executable and both native libraries. Dependency caches and debug artifacts are retained.
+- **`make check`:** runs `cargo fmt --check`, Clippy, and the offline test suite (protocol encoding, native ABI compatibility, embedded library materialization, forced builds, Mach right ownership, broker state, log buffering, and CLI output). Build regression tests use an isolated temporary target directory. Loopback tests use local test ports only and never attach to `tccd` or alter system permissions.
 - **CI:** the [Source checks](.github/workflows/source-checks.yml) workflow verifies Rust formatting, Python syntax, and English-only repository text outside `README_CN.md`.
 
 ## Acknowledgements

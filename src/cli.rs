@@ -38,7 +38,10 @@ struct Cli {
 enum Command {
     #[command(about = "Build the local native libraries and controller")]
     Build {
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Rebuild xtcc release artifacts, including embedded native libraries"
+        )]
         force: bool,
     },
     #[command(
@@ -64,7 +67,7 @@ enum Command {
         all: bool,
     },
     #[command(
-        about = "Check tool locations and embedded native libraries in read-only mode; root is not required"
+        about = "Check runtime tools and embedded native libraries in read-only mode; root is not required"
     )]
     Doctor,
     #[command(about = "Manage Network Extensions on SIP-disabled development Macs")]
@@ -247,10 +250,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
 fn build(force: bool, json_output: bool) -> Result<i32> {
     let mut command = ProcessCommand::new("/usr/bin/make");
     command.current_dir(env!("CARGO_MANIFEST_DIR"));
-    if force {
-        command.arg("-B");
-    }
-    command.arg("all");
+    command.arg(if force { "rebuild" } else { "all" });
     if json_output {
         let output = command.output().context("could not run /usr/bin/make")?;
         let ok = output.status.success();
@@ -296,17 +296,11 @@ fn doctor(json_output: bool) -> Result<i32> {
     if let Some(path) = std::env::var_os("DEVELOPER_DIR") {
         developer_dirs.insert(0, path.into());
     }
-    let rust = std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .map(|home| PathBuf::from(home).join(".cargo/bin"));
-    let tools: Vec<Value> = ["make", "xcrun", "lldb", "clang", "cargo", "rustc"]
+    let tools: Vec<Value> = ["xcrun", "lldb"]
         .iter()
         .map(|name| {
             let mut fixed = vec![PathBuf::from("/usr/bin").join(name)];
             fixed.extend(developer_dirs.iter().map(|p| p.join("usr/bin").join(name)));
-            if let Some(rust) = &rust {
-                fixed.push(rust.join(name));
-            }
             let path = find_tool(name, &fixed);
             json!({"name": name, "found": path.is_some(), "path": path})
         })

@@ -15,6 +15,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const RUNTIME_DIR: &str = "/private/var/run/xtcc";
+const RUNTIME_MODE: u32 = 0o755;
 const TCC_LIBRARY_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libxtcc_inject.dylib"));
 const NE_LIBRARY_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libxtcc_ne.dylib"));
 const LLDB_SCRIPT: &str = include_str!("../native/lldb_bootstrap.py");
@@ -56,20 +57,22 @@ impl NativeLibrary {
     pub(crate) fn materialize_in(self, directory: &Path) -> Result<PathBuf> {
         DirBuilder::new()
             .recursive(true)
-            .mode(0o755)
+            .mode(RUNTIME_MODE)
             .create(directory)
             .with_context(|| {
                 format!("could not create runtime directory {}", directory.display())
             })?;
-        fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).with_context(|| {
-            format!(
-                "could not set permissions on runtime directory {}",
-                directory.display()
-            )
-        })?;
+        fs::set_permissions(directory, fs::Permissions::from_mode(RUNTIME_MODE)).with_context(
+            || {
+                format!(
+                    "could not set permissions on runtime directory {}",
+                    directory.display()
+                )
+            },
+        )?;
         let target = directory.join(self.file_name());
         if fs::read(&target).ok().as_deref() == Some(self.bytes()) {
-            fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
+            fs::set_permissions(&target, fs::Permissions::from_mode(RUNTIME_MODE))
                 .with_context(|| format!("could not set permissions on {}", target.display()))?;
             return validate_library(&target);
         }
@@ -86,11 +89,13 @@ impl NativeLibrary {
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
-                .mode(0o755)
+                .mode(RUNTIME_MODE)
                 .open(&temporary)
                 .with_context(|| format!("could not create {}", temporary.display()))?;
             file.write_all(self.bytes())
                 .with_context(|| format!("could not write {}", temporary.display()))?;
+            file.set_permissions(fs::Permissions::from_mode(RUNTIME_MODE))
+                .with_context(|| format!("could not set permissions on {}", temporary.display()))?;
             file.sync_all()
                 .with_context(|| format!("could not sync {}", temporary.display()))?;
             fs::rename(&temporary, &target).with_context(|| {
@@ -368,6 +373,8 @@ fn start_and_attach(connections: &[Connection], body: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusty_fork::rusty_fork_test;
+
     #[test]
     fn health_requires_complete_fresh_counts() {
         let good = json!({"ok":true,"helper_pid":1,"connected":2,"expected":2,"acknowledged":2});
@@ -418,25 +425,35 @@ mod tests {
         assert!(program.contains("process.Detach()"));
         assert!(lldb_program(0, path).is_err());
     }
-    #[test]
-    fn embedded_libraries_are_valid_macho_and_materialize_idempotently() {
-        const MACHO_64_MAGIC: &[u8] = &[0xCF, 0xFA, 0xED, 0xFE];
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory =
-            std::env::temp_dir().join(format!("xtcc-embed-{}-{nonce}", std::process::id()));
-        for library in [NativeLibrary::TccInject, NativeLibrary::NetworkExtension] {
-            assert!(library.bytes().starts_with(MACHO_64_MAGIC));
-            let first = library.materialize_in(&directory).unwrap();
-            let second = library.materialize_in(&directory).unwrap();
-            assert_eq!(first, second);
-            assert_eq!(fs::read(&first).unwrap(), library.bytes());
-            fs::write(&first, b"corrupted").unwrap();
-            let repaired = library.materialize_in(&directory).unwrap();
-            assert_eq!(fs::read(&repaired).unwrap(), library.bytes());
+    rusty_fork_test! {
+        #[test]
+        fn embedded_libraries_are_valid_macho_and_materialize_idempotently() {
+            use std::os::unix::fs::MetadataExt;
+
+            // SAFETY: This test runs in a separate process; umask changes only that process's mask.
+            unsafe { libc::umask(0o077) };
+            const MACHO_64_MAGIC: &[u8] = &[0xCF, 0xFA, 0xED, 0xFE];
+            let temporary = tempfile::tempdir().unwrap();
+            let directory = temporary.path().join("runtime");
+            for library in [NativeLibrary::TccInject, NativeLibrary::NetworkExtension] {
+                assert!(library.bytes().starts_with(MACHO_64_MAGIC));
+                let first = library.materialize_in(&directory).unwrap();
+                let metadata = fs::metadata(&first).unwrap();
+                assert_eq!(metadata.permissions().mode() & 0o777, 0o755);
+                assert_eq!(fs::metadata(&directory).unwrap().permissions().mode() & 0o777, 0o755);
+
+                fs::set_permissions(&first, fs::Permissions::from_mode(0o700)).unwrap();
+                let second = library.materialize_in(&directory).unwrap();
+                assert_eq!(first, second);
+                assert_eq!(fs::metadata(&second).unwrap().ino(), metadata.ino());
+                assert_eq!(fs::metadata(&second).unwrap().permissions().mode() & 0o777, 0o755);
+                assert_eq!(fs::read(&second).unwrap(), library.bytes());
+
+                fs::write(&first, b"corrupted").unwrap();
+                let repaired = library.materialize_in(&directory).unwrap();
+                assert_eq!(fs::read(&repaired).unwrap(), library.bytes());
+                assert_eq!(fs::metadata(&repaired).unwrap().permissions().mode() & 0o777, 0o755);
+            }
         }
-        let _ = fs::remove_dir_all(&directory);
     }
 }
