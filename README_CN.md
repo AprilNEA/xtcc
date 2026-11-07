@@ -2,7 +2,7 @@
 
 # xtcc
 
-`xtcc` 在关闭 SIP 的 Apple Silicon 开发设备上控制临时 TCC 权限绕过会话与 Network Extension (`ne`) 配置：
+`xtcc` 是面向关闭 SIP 的 Apple Silicon 开发设备的单文件命令行控制工具，用于管理临时 TCC 权限绕过会话与 Network Extension (`ne`) 配置。构建阶段 (`build.rs`) 会自动编译并签名两个 `arm64e` Objective-C 载荷，将其内嵌至 `xtcc` 可执行文件，并在运行时按需释放到 `/private/var/run/xtcc`：
 
 - **TCC 检查绕过（`start`、`stop`、`status`、`logs`）**：通过 LLDB（内置 Python 运行时）向 `tccd` 注入来自 [tcc-bypass](https://github.com/unixzii/tcc-bypass "前往外部站点") 的 Objective-C 钩子 (`libxtcc_inject.dylib`)，并由 Rust Mach broker (`dev.xtcc.control`) 管理会话期限与权限检查日志。
 - **Network Extension 管理 (`ne`)**：独立于 TCC broker，通过注入 `libxtcc_ne.dylib` 的短生命周期 Apple 客户端进程批准已注册的系统扩展，并配置 Content Filter、DNS Proxy 和 Packet Tunnel VPN（支持无 Apple 开发者证书的 ad-hoc 签名 bundle）。
@@ -13,15 +13,14 @@
 
 运行控制命令要求 Apple Silicon Mac（macOS 15.0 及以上）、`root` 权限 (`sudo`) 以及关闭 SIP 限制（TCC 注入还要求支持 Python 的 LLDB）。`xtcc` 禁止自动调用 `sudo`，也不会修改 SIP、AMFI、启动参数、开发者模式或正在运行的 NE 守护进程。
 
-将发布包或本地 `make` 构建出的 `xtcc`、`libxtcc_inject.dylib` 和 `libxtcc_ne.dylib` 放入 `PATH` 中的同一目录（例如 `/usr/local/bin`），然后运行 `xtcc doctor` 验证环境：
+将发布包或本地 `make` 构建出的单个 `xtcc` 二进制安装到 `PATH`（例如 `/usr/local/bin`），然后运行 `xtcc doctor` 验证环境：
 
 ```sh
-sudo install -m 0755 target/release/xtcc libxtcc_inject.dylib libxtcc_ne.dylib /usr/local/bin/
+sudo install -m 0755 target/release/xtcc /usr/local/bin/xtcc
 xtcc doctor
 ```
 
-- **动态库查找规则**：`xtcc` 默认从可执行文件所在目录加载 `libxtcc_inject.dylib` 与 `libxtcc_ne.dylib`（未找到时回退至源码仓库根目录），也可以通过环境变量 `XTCC_LIBRARY` 与 `XTCC_NE_LIBRARY` 覆盖路径。运行期间禁止替换正在使用的动态库。
-- **只读环境自检**：`xtcc doctor` 仅以只读方式检查所需工具与两个 `.dylib` 文件，无需 `root` 权限，不会加载动态库或附加系统进程。
+`xtcc doctor` 仅以只读方式检查外部工具路径与内嵌载荷状态，无需 `root` 权限，不会写出动态库或附加系统进程。
 
 ## 绕过 TCC 检查
 
@@ -115,8 +114,8 @@ sudo xtcc ne disconnect "$VPN_UUID"
 
 | 命令 | 说明 |
 | --- | --- |
-| `build [--force]` | 调用 `make` 构建 CLI 与两个原生动态库。 |
-| `doctor` | 只读检查工具路径与构建产物，无需 `root` 权限。 |
+| `build [--force]` | 调用 `make` 构建内嵌原生载荷的单文件 `xtcc`。 |
+| `doctor` | 只读检查工具路径与内嵌原生载荷，无需 `root` 权限。 |
 | `start [minutes]` | 启动或续期 TCC 绕过会话（1 分钟～1440 分钟，默认 30 分钟）。别名：`enable`。 |
 | `stop` | 停止 TCC 绕过，不卸载 `libxtcc_inject.dylib`。别名：`disable`。 |
 | `status` | 查询已连接的 `tccd` 进程、绕过状态、到期时间与日志计数。 |
@@ -161,14 +160,8 @@ make
 make check
 ```
 
-| 产物 | 用途 |
-| --- | --- |
-| `target/release/xtcc` | Rust 命令行程序与 Mach broker |
-| `libxtcc_inject.dylib` | 已完成 ad-hoc 签名的 `arm64e` TCC 注入库 |
-| `libxtcc_ne.dylib` | 已完成 ad-hoc 签名的 `arm64e` 短生命周期 NE 客户端库 |
-
-- **指定 Cargo 路径**：`Makefile` 默认调用 `$HOME/.cargo/bin/cargo`。若安装位置不同，可以执行 `make CARGO=/path/to/cargo`。
-- **运行离线检查**：`make check` 运行格式检查、Clippy 与离线测试（覆盖协议编码、原生 ABI 布局、Mach 端口所有权、broker 状态、日志缓冲与 CLI 输出）。Mach 回环测试仅使用测试进程自建端口，不会附加 `tccd` 或修改系统权限。
+- **单文件构建**：`make` 执行 `cargo build --release --locked`，由 `build.rs` 编译并 ad-hoc 签名 `libxtcc_inject.dylib` 与 `libxtcc_ne.dylib`，最终内嵌生成单一可执行文件 `target/release/xtcc`。若 Cargo 不在默认路径 `$HOME/.cargo/bin/cargo`，可以执行 `make CARGO=/path/to/cargo`。
+- **运行离线检查**：`make check` 运行格式检查、Clippy 与离线测试（覆盖协议编码、原生 ABI 布局、内嵌动态库释放、Mach 端口所有权、broker 状态、日志缓冲与 CLI 输出）。Mach 回环测试仅使用测试进程自建端口，不会附加 `tccd` 或修改系统权限。
 - **持续集成检查**：[源码检查工作流](.github/workflows/source-checks.yml)负责检查 Rust 格式、Python 语法及除 `README_CN.md` 外的英文文本规范。
 
 ## 致谢与许可

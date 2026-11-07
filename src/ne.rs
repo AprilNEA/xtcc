@@ -62,13 +62,9 @@ unsafe extern "C" {
     fn csr_check(mask: u32) -> libc::c_int;
 }
 
-pub(crate) fn resolve_library() -> Result<PathBuf> {
-    bootstrap::resolve_native_library("libxtcc_ne.dylib", "XTCC_NE_LIBRARY")
-}
-
 impl Service {
     fn invoke(&self, request: Value, timeout: u32) -> Result<Value> {
-        let library = resolve_library()?;
+        let library = bootstrap::NativeLibrary::NetworkExtension.materialize()?;
         ensure!(
             !library.as_os_str().as_encoded_bytes().contains(&b':'),
             "DYLD_INSERT_LIBRARIES cannot represent a library path containing ':'"

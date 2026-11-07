@@ -130,3 +130,16 @@ fn network_extension_arguments_fail_before_runtime_operations() {
         assert!(!error.contains("NE client"), "{arguments:?}: {error}");
     }
 }
+
+#[test]
+fn doctor_reports_embedded_libraries_without_external_dylibs() {
+    let result = output(&["doctor", "--json"]);
+    assert!(result.status.success(), "{:?}", result);
+    let record: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(record["ok"], true);
+    for key in ["library", "ne_library"] {
+        assert_eq!(record["files"][key]["embedded"], true, "{key}");
+        assert!(record["files"][key]["bytes"].as_u64().unwrap_or(0) > 0, "{key}");
+    }
+}
+

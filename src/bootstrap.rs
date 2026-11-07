@@ -6,15 +6,109 @@ use crate::{client, process};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::io;
+use std::fs::{self, DirBuilder, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const LIBRARY_NAME: &str = "libxtcc_inject.dylib";
+const RUNTIME_DIR: &str = "/private/var/run/xtcc";
+const TCC_LIBRARY_BYTES: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/libxtcc_inject.dylib"));
+const NE_LIBRARY_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libxtcc_ne.dylib"));
 const LLDB_SCRIPT: &str = include_str!("../native/lldb_bootstrap.py");
 
+/// Embedded `arm64e` native library materialized into a root-owned runtime directory on demand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeLibrary {
+    TccInject,
+    NetworkExtension,
+}
+
+impl NativeLibrary {
+    /// Returns the Mach-O dynamic library filename.
+    pub const fn file_name(self) -> &'static str {
+        match self {
+            Self::TccInject => "libxtcc_inject.dylib",
+            Self::NetworkExtension => "libxtcc_ne.dylib",
+        }
+    }
+
+    /// Returns the embedded `arm64e` Mach-O payload compiled by `build.rs`.
+    pub const fn bytes(self) -> &'static [u8] {
+        match self {
+            Self::TccInject => TCC_LIBRARY_BYTES,
+            Self::NetworkExtension => NE_LIBRARY_BYTES,
+        }
+    }
+
+    /// Returns the default runtime materialization path under `/private/var/run/xtcc`.
+    pub fn runtime_path(self) -> PathBuf {
+        Path::new(RUNTIME_DIR).join(self.file_name())
+    }
+
+    /// Writes the embedded library to `/private/var/run/xtcc` if missing or outdated.
+    pub fn materialize(self) -> Result<PathBuf> {
+        self.materialize_in(Path::new(RUNTIME_DIR))
+    }
+
+    pub(crate) fn materialize_in(self, directory: &Path) -> Result<PathBuf> {
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o755)
+            .create(directory)
+            .with_context(|| format!("could not create runtime directory {}", directory.display()))?;
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).with_context(|| {
+            format!(
+                "could not set permissions on runtime directory {}",
+                directory.display()
+            )
+        })?;
+        let target = directory.join(self.file_name());
+        if fs::read(&target).ok().as_deref() == Some(self.bytes()) {
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
+                .with_context(|| format!("could not set permissions on {}", target.display()))?;
+            return validate_library(&target);
+        }
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temporary = directory.join(format!(
+            ".{}.{}.{nonce}.tmp",
+            self.file_name(),
+            std::process::id()
+        ));
+        let write_result = (|| -> Result<()> {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o755)
+                .open(&temporary)
+                .with_context(|| format!("could not create {}", temporary.display()))?;
+            file.write_all(self.bytes())
+                .with_context(|| format!("could not write {}", temporary.display()))?;
+            file.sync_all()
+                .with_context(|| format!("could not sync {}", temporary.display()))?;
+            fs::rename(&temporary, &target).with_context(|| {
+                format!(
+                    "could not move {} to {}",
+                    temporary.display(),
+                    target.display()
+                )
+            })
+        })();
+        if write_result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        write_result?;
+        validate_library(&target)
+    }
+}
+
+/// Validate that a materialized `.dylib` file exists and has a valid UTF-8 path.
 fn validate_library(path: &Path) -> Result<PathBuf> {
     let canonical = path
         .canonicalize()
@@ -35,36 +129,6 @@ fn validate_library(path: &Path) -> Result<PathBuf> {
         bail!("library path contains NUL");
     }
     Ok(canonical)
-}
-
-/// Resolve XTCC_LIBRARY first, then the executable directory, then the project root.
-/// An invalid explicit environment override must fail rather than fall back to another library.
-pub fn resolve_library() -> Result<PathBuf> {
-    resolve_native_library(LIBRARY_NAME, "XTCC_LIBRARY")
-}
-
-pub(crate) fn resolve_native_library(name: &str, variable: &str) -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os(variable) {
-        if path.is_empty() {
-            bail!("{variable} is empty");
-        }
-        return validate_library(Path::new(&path));
-    }
-    let executable = std::env::current_exe().context("could not locate current executable")?;
-    let mut candidates = Vec::new();
-    if let Some(parent) = executable.parent() {
-        candidates.push(parent.join(name));
-    }
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name));
-    for candidate in &candidates {
-        if candidate
-            .try_exists()
-            .with_context(|| format!("cannot inspect {}", candidate.display()))?
-        {
-            return validate_library(candidate);
-        }
-    }
-    bail!("missing {name}; run xtcc build or set {variable}")
 }
 
 fn healthy(reply: &Value) -> bool {
@@ -88,7 +152,7 @@ pub fn ensure_broker() -> Result<Value> {
             return Err(error.context("cannot verify broker health; no attachment attempted"))
         }
     }
-    let library = resolve_library()?;
+    let library = NativeLibrary::TccInject.materialize()?;
     let pids = process::live_tccd()?;
     if pids.is_empty() {
         bail!("no running tccd");
@@ -352,5 +416,29 @@ mod tests {
         assert!(program.contains("cyan_tccd_inject_ready"));
         assert!(program.contains("process.Detach()"));
         assert!(lldb_program(0, path).is_err());
+    }
+    #[test]
+    fn embedded_libraries_are_valid_macho_and_materialize_idempotently() {
+        const MACHO_64_MAGIC: &[u8] = &[0xCF, 0xFA, 0xED, 0xFE];
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("xtcc-embed-{}-{nonce}", std::process::id()));
+        for library in [
+            NativeLibrary::TccInject,
+            NativeLibrary::NetworkExtension,
+        ] {
+            assert!(library.bytes().starts_with(MACHO_64_MAGIC));
+            let first = library.materialize_in(&directory).unwrap();
+            let second = library.materialize_in(&directory).unwrap();
+            assert_eq!(first, second);
+            assert_eq!(fs::read(&first).unwrap(), library.bytes());
+            fs::write(&first, b"corrupted").unwrap();
+            let repaired = library.materialize_in(&directory).unwrap();
+            assert_eq!(fs::read(&repaired).unwrap(), library.bytes());
+        }
+        let _ = fs::remove_dir_all(&directory);
     }
 }

@@ -64,7 +64,7 @@ enum Command {
         all: bool,
     },
     #[command(
-        about = "Check tool locations and build artifacts in read-only mode; root is not required"
+        about = "Check tool locations and embedded native libraries in read-only mode; root is not required"
     )]
     Doctor,
     #[command(about = "Manage Network Extensions on SIP-disabled development Macs")]
@@ -311,22 +311,28 @@ fn doctor(json_output: bool) -> Result<i32> {
             json!({"name": name, "found": path.is_some(), "path": path})
         })
         .collect();
-    let library = bootstrap::resolve_library();
-    let library_error = library.as_ref().err().map(|e| e.to_string());
-    let ne_library = ne::resolve_library();
-    let ne_library_error = ne_library.as_ref().err().map(|e| e.to_string());
+    let tcc_library = bootstrap::NativeLibrary::TccInject;
+    let ne_library = bootstrap::NativeLibrary::NetworkExtension;
     let current_executable = std::env::current_exe().ok();
-    let makefile = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Makefile");
     let ok = tools.iter().all(|t| t["found"] == true)
-        && library.is_ok()
-        && ne_library.is_ok()
-        && makefile.is_file();
+        && !tcc_library.bytes().is_empty()
+        && !ne_library.bytes().is_empty();
     let value = json!({"ok":ok,"tools":tools,"files":{
-        "library":library.ok(),"library_error":library_error,"executable":current_executable,
-        "ne_library":ne_library.ok(),"ne_library_error":ne_library_error,
-        "makefile":makefile,"makefile_found":makefile.is_file()},
+        "executable":current_executable,
+        "library":{
+            "name":tcc_library.file_name(),
+            "embedded":true,
+            "bytes":tcc_library.bytes().len(),
+            "runtime_path":tcc_library.runtime_path(),
+        },
+        "ne_library":{
+            "name":ne_library.file_name(),
+            "embedded":true,
+            "bytes":ne_library.bytes().len(),
+            "runtime_path":ne_library.runtime_path(),
+        }},
         "lldb_python":"LLDB still depends on its embedded Python; runtime compatibility is not tested",
-        "checks":"read-only file metadata; no privilege probes, no SIP checks, no process attachment"});
+        "checks":"read-only file metadata and embedded payloads; no privilege probes, no SIP checks, no process attachment"});
     let mut stdout = io::stdout().lock();
     if json_output {
         serde_json::to_writer(&mut stdout, &value)?;
@@ -336,9 +342,9 @@ fn doctor(json_output: bool) -> Result<i32> {
             stdout,
             "Doctor: {}",
             if ok {
-                "files found"
+                "tools and embedded libraries ready"
             } else {
-                "tools or build files missing"
+                "required tools missing"
             }
         )?;
         for tool in value["tools"].as_array().unwrap() {
@@ -350,24 +356,14 @@ fn doctor(json_output: bool) -> Result<i32> {
             )?;
         }
         for key in ["library", "ne_library"] {
+            let entry = &value["files"][key];
             writeln!(
                 stdout,
-                "  {key}: {}",
-                value["files"][key].as_str().unwrap_or("not found")
+                "  {key}: embedded ({} bytes -> {})",
+                entry["bytes"].as_u64().unwrap_or(0),
+                entry["runtime_path"].as_str().unwrap_or("unknown")
             )?;
-            if let Some(error) = value["files"][format!("{key}_error")].as_str() {
-                writeln!(stdout, "    {error}")?;
-            }
         }
-        writeln!(
-            stdout,
-            "  Makefile: {}",
-            if value["files"]["makefile_found"] == true {
-                "found"
-            } else {
-                "not found"
-            }
-        )?;
         writeln!(
             stdout,
             "LLDB still depends on embedded Python; runtime compatibility is unverified."

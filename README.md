@@ -4,7 +4,7 @@
 
 [Simplified Chinese](README_CN.md) · [Validation](VALIDATION.md)
 
-`xtcc` manages temporary TCC permission bypasses and Network Extension (`ne`) configurations on isolated, SIP-disabled Apple Silicon Macs:
+`xtcc` is a single-binary controller for temporary TCC permission bypasses and Network Extension (`ne`) configurations on isolated, SIP-disabled Apple Silicon Macs. Its `arm64e` Objective-C payloads are compiled and ad-hoc-signed at build time (`build.rs`), embedded into the `xtcc` executable, and materialized on demand under `/private/var/run/xtcc`:
 
 - **TCC bypass (`start`, `stop`, `status`, `logs`):** injects the Objective-C hooks from [tcc-bypass](https://github.com/unixzii/tcc-bypass) (`libxtcc_inject.dylib`) into `tccd` via LLDB and coordinates time-limited sessions and structured permission-check logs through a Rust Mach broker (`dev.xtcc.control`).
 - **Network Extensions (`ne`):** launches short-lived Apple client binaries with `libxtcc_ne.dylib` to approve staged system extensions and configure Content Filters, DNS Proxies, and Packet-Tunnel VPNs—including ad-hoc-signed bundles without an Apple Developer certificate.
@@ -15,15 +15,14 @@
 
 Runtime control commands require an Apple Silicon Mac (macOS 15.0+), `root` (`sudo`), and disabled SIP restrictions (TCC injection also requires Python-enabled LLDB). `xtcc` never invokes `sudo` automatically and never modifies SIP, AMFI, boot arguments, developer mode, or running NE daemons.
 
-Place `xtcc`, `libxtcc_inject.dylib`, and `libxtcc_ne.dylib` in the same directory on your `PATH` (from a release bundle or a local `make` build), then run `xtcc doctor` to verify your setup:
+Install the standalone `xtcc` binary onto your `PATH` (from a release asset or a local `make` build) and run `xtcc doctor` to verify required tools and embedded payloads:
 
 ```sh
-sudo install -m 0755 target/release/xtcc libxtcc_inject.dylib libxtcc_ne.dylib /usr/local/bin/
+sudo install -m 0755 target/release/xtcc /usr/local/bin/xtcc
 xtcc doctor
 ```
 
-- **Library lookup:** by default, `xtcc` loads `libxtcc_inject.dylib` and `libxtcc_ne.dylib` from the directory containing the `xtcc` executable (falling back to the source repository root). Set `XTCC_LIBRARY` or `XTCC_NE_LIBRARY` to override either path. Do not replace the libraries while they are in use.
-- **Read-only check:** `xtcc doctor` verifies required tools and both `.dylib` files without `root` privileges, library loading, or process attachment.
+`xtcc doctor` runs in read-only mode without `root` privileges, library extraction, or process attachment.
 
 ## TCC Bypass
 
@@ -117,8 +116,8 @@ sudo xtcc ne disconnect "$VPN_UUID"
 
 | Command | Description |
 | --- | --- |
-| `build [--force]` | Build the CLI and both native libraries via `make`. |
-| `doctor` | Check tool paths and build artifacts in read-only mode without root. |
+| `build [--force]` | Build the standalone CLI with embedded native libraries via `make`. |
+| `doctor` | Check tool paths and embedded native libraries in read-only mode without root. |
 | `start [minutes]` | Enable or renew a TCC bypass session (`1`–`1440`, default `30`). Alias: `enable`. |
 | `stop` | Disable the active TCC bypass without unloading `libxtcc_inject.dylib`. Alias: `disable`. |
 | `status` | Show connected `tccd` processes, bypass state, expiration, and log counts. |
@@ -161,14 +160,8 @@ make
 make check
 ```
 
-| Artifact | Purpose |
-| --- | --- |
-| `target/release/xtcc` | Rust CLI and Mach broker |
-| `libxtcc_inject.dylib` | Ad-hoc-signed `arm64e` TCC injection library |
-| `libxtcc_ne.dylib` | Ad-hoc-signed `arm64e` one-shot NE client library |
-
-- **`make`:** compiles the CLI and both native libraries. Override Cargo with `make CARGO=/path/to/cargo` if Cargo is not at `$HOME/.cargo/bin/cargo`.
-- **`make check`:** runs `cargo fmt --check`, Clippy, and the offline test suite (protocol encoding, native ABI compatibility, Mach right ownership, broker state, log buffering, and CLI output). Loopback tests use local test ports only and never attach to `tccd` or alter system permissions.
+- **`make`:** runs `cargo build --release --locked`. `build.rs` compiles and ad-hoc-signs both `arm64e` native libraries (`libxtcc_inject.dylib` and `libxtcc_ne.dylib`) and embeds them into `target/release/xtcc`. Override Cargo with `make CARGO=/path/to/cargo` if Cargo is not at `$HOME/.cargo/bin/cargo`.
+- **`make check`:** runs `cargo fmt --check`, Clippy, and the offline test suite (protocol encoding, native ABI compatibility, embedded library materialization, Mach right ownership, broker state, log buffering, and CLI output). Loopback tests use local test ports only and never attach to `tccd` or alter system permissions.
 - **CI:** the [Source checks](.github/workflows/source-checks.yml) workflow verifies Rust formatting, Python syntax, and English-only repository text outside `README_CN.md`.
 
 ## Acknowledgements
