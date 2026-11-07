@@ -1,7 +1,7 @@
 //! Argument parsing must finish before checking for root or building, making RPCs, or attaching.
 
 use crate::protocol::{Connection, Operation, MAX_BODY};
-use crate::{bootstrap, broker, client, process};
+use crate::{bootstrap, broker, client, ne, process};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
@@ -20,8 +20,8 @@ struct Connections(Vec<Connection>);
 #[command(
     name = "xtcc",
     version,
-    about = "Local TCC research controller; never invokes sudo automatically",
-    long_about = "Local TCC research controller. Runtime commands require root, but the program never invokes sudo automatically.\nLLDB still depends on embedded Python. doctor only checks files in read-only mode; it does not probe privileges or attach to processes."
+    about = "Local TCC and NetworkExtension research controller; never invokes sudo automatically",
+    long_about = "Local TCC and NetworkExtension research controller. Runtime commands require root, but the program never invokes sudo automatically.\nTCC injection uses LLDB with embedded Python. NE controls require SIP-disabled development Macs. doctor only checks files in read-only mode; it does not probe privileges or attach to processes."
 )]
 struct Cli {
     #[arg(
@@ -36,7 +36,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    #[command(about = "Build the local native library and controller")]
+    #[command(about = "Build the local native libraries and controller")]
     Build {
         #[arg(long)]
         force: bool,
@@ -67,6 +67,13 @@ enum Command {
         about = "Check tool locations and build artifacts in read-only mode; root is not required"
     )]
     Doctor,
+    #[command(about = "Manage Network Extensions on SIP-disabled development Macs")]
+    Ne {
+        #[arg(long, global = true, default_value = "30", value_parser = clap::value_parser!(u32).range(1..=300), help = "Timeout in seconds for each one-shot NE client")]
+        timeout: u32,
+        #[command(subcommand)]
+        command: ne::Command,
+    },
     #[command(name = "_serve", hide = true)]
     Serve {
         #[arg(value_parser = parse_connections)]
@@ -217,6 +224,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
             json_output,
         ),
         Command::Doctor => doctor(json_output),
+        Command::Ne { command, timeout } => ne::run(command, timeout, json_output),
         Command::Serve {
             connections,
             capacity,
@@ -305,11 +313,17 @@ fn doctor(json_output: bool) -> Result<i32> {
         .collect();
     let library = bootstrap::resolve_library();
     let library_error = library.as_ref().err().map(|e| e.to_string());
+    let ne_library = ne::resolve_library();
+    let ne_library_error = ne_library.as_ref().err().map(|e| e.to_string());
     let current_executable = std::env::current_exe().ok();
     let makefile = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Makefile");
-    let ok = tools.iter().all(|t| t["found"] == true) && library.is_ok() && makefile.is_file();
+    let ok = tools.iter().all(|t| t["found"] == true)
+        && library.is_ok()
+        && ne_library.is_ok()
+        && makefile.is_file();
     let value = json!({"ok":ok,"tools":tools,"files":{
         "library":library.ok(),"library_error":library_error,"executable":current_executable,
+        "ne_library":ne_library.ok(),"ne_library_error":ne_library_error,
         "makefile":makefile,"makefile_found":makefile.is_file()},
         "lldb_python":"LLDB still depends on its embedded Python; runtime compatibility is not tested",
         "checks":"read-only file metadata; no privilege probes, no SIP checks, no process attachment"});
@@ -335,13 +349,15 @@ fn doctor(json_output: bool) -> Result<i32> {
                 tool["path"].as_str().unwrap_or("not found")
             )?;
         }
-        writeln!(
-            stdout,
-            "  library: {}",
-            value["files"]["library"].as_str().unwrap_or("not found")
-        )?;
-        if let Some(error) = value["files"]["library_error"].as_str() {
-            writeln!(stdout, "    {error}")?;
+        for key in ["library", "ne_library"] {
+            writeln!(
+                stdout,
+                "  {key}: {}",
+                value["files"][key].as_str().unwrap_or("not found")
+            )?;
+            if let Some(error) = value["files"][format!("{key}_error")].as_str() {
+                writeln!(stdout, "    {error}")?;
+            }
         }
         writeln!(
             stdout,

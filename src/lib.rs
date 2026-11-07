@@ -12,6 +12,7 @@ pub mod cli;
 pub mod client;
 pub(crate) mod lifecycle;
 pub mod mach;
+pub(crate) mod ne;
 pub mod process;
 pub mod protocol;
 pub mod ring;

@@ -1,5 +1,6 @@
 /target/
 /libxtcc_inject.dylib
+/libxtcc_ne.dylib
 /.build-module.*
 .DS_Store
 /IMPLEMENTATION.md

@@ -40,18 +40,22 @@ fn validate_library(path: &Path) -> Result<PathBuf> {
 /// Resolve XTCC_LIBRARY first, then the executable directory, then the project root.
 /// An invalid explicit environment override must fail rather than fall back to another library.
 pub fn resolve_library() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("XTCC_LIBRARY") {
+    resolve_native_library(LIBRARY_NAME, "XTCC_LIBRARY")
+}
+
+pub(crate) fn resolve_native_library(name: &str, variable: &str) -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os(variable) {
         if path.is_empty() {
-            bail!("XTCC_LIBRARY is empty");
+            bail!("{variable} is empty");
         }
         return validate_library(Path::new(&path));
     }
     let executable = std::env::current_exe().context("could not locate current executable")?;
     let mut candidates = Vec::new();
     if let Some(parent) = executable.parent() {
-        candidates.push(parent.join(LIBRARY_NAME));
+        candidates.push(parent.join(name));
     }
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(LIBRARY_NAME));
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name));
     for candidate in &candidates {
         if candidate
             .try_exists()
@@ -60,7 +64,7 @@ pub fn resolve_library() -> Result<PathBuf> {
             return validate_library(candidate);
         }
     }
-    bail!("missing {LIBRARY_NAME}; run xtcc build or set XTCC_LIBRARY")
+    bail!("missing {name}; run xtcc build or set {variable}")
 }
 
 fn healthy(reply: &Value) -> bool {
