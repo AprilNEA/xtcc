@@ -26,10 +26,10 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust formatting tools
-        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+        run: rustup show active-toolchain
 
       - name: Check Rust formatting
-        run: cargo +1.98.1 fmt --all --check
+        run: cargo fmt --all --check
 
       - name: Check source files
         run: python3 .github/scripts/check_source.py

@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  github-release:
+    name: Publish GitHub Release
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Validate release tag and license metadata
+        run: >-
+          cargo metadata --no-deps --locked --format-version 1 |
+          jq --exit-status --arg tag "$GITHUB_REF_NAME"
+          '.packages[0] | $tag == ("v" + .version) and (.license != null or .license_file != null)'
+
+      - name: Check source files
+        run: python3 .github/scripts/check_source.py
+
+      - name: Check code and run offline tests
+        run: make check
+
+      - name: Verify crate package
+        run: cargo publish --dry-run --locked
+
+      - name: Build standalone binary
+        run: make
+
+      - name: Verify binary signature
+        run: codesign --verify --strict target/release/xtcc
+
+      - name: Generate checksum
+        working-directory: target/release
+        run: shasum --algorithm 256 xtcc > xtcc.sha256
+
+      - name: Publish binary and checksum
+        working-directory: target/release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" xtcc xtcc.sha256
+          --verify-tag --generate-notes --title "xtcc $GITHUB_REF_NAME"
+
+  crates-io:
+    name: Publish to crates.io
+    needs: github-release
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Publish crate
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked

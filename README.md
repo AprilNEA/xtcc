@@ -15,12 +15,17 @@
 
 Runtime control commands require an Apple Silicon Mac (macOS 15.0+), `root` (`sudo`), and disabled SIP restrictions (TCC injection also requires Python-enabled LLDB). `xtcc` never invokes `sudo` automatically and never modifies SIP, AMFI, boot arguments, developer mode, or running NE daemons.
 
-Install the standalone `xtcc` binary onto your `PATH` (from a release asset or a local `make` build) and run `xtcc doctor` to verify required tools and embedded payloads:
+Download the standalone Apple Silicon binary and checksum from [GitHub Releases](https://github.com/AprilNEA/xtcc/releases), verify the download, and install it onto your `PATH`:
 
 ```sh
-sudo install -m 0755 target/release/xtcc /usr/local/bin/xtcc
+curl --fail --location --remote-name https://github.com/AprilNEA/xtcc/releases/latest/download/xtcc &&
+curl --fail --location --remote-name https://github.com/AprilNEA/xtcc/releases/latest/download/xtcc.sha256 &&
+shasum --algorithm 256 --check xtcc.sha256 &&
+sudo install -m 0755 xtcc /usr/local/bin/xtcc &&
 xtcc doctor
 ```
+
+Alternatively, with the [build requirements](#build-requirements) installed, build from crates.io with `cargo install xtcc --locked`. For a local checkout, run `make` and install `target/release/xtcc` instead.
 
 `xtcc doctor` checks runtime tool paths (`xcrun` and LLDB) and embedded payloads; Rust, Cargo, `make`, and a compiler are not required. The check is read-only and requires neither `root` privileges nor library extraction or process attachment.
 
@@ -149,7 +154,7 @@ Pass the global `--json` flag for compact machine-readable JSON output (`logs --
 ### Build Requirements
 
 - Apple Silicon Mac (`arm64` / `arm64e`), targeting macOS 15.0 or later (runtime compatibility depends on private macOS frameworks for the active OS version).
-- Rust 1.85+ and Cargo.
+- Rust and Cargo (the development toolchain is pinned in `rust-toolchain.toml`).
 - Xcode with the macOS SDK, Apple Clang, and Python-enabled LLDB.
 - System `make` and `codesign`.
 
@@ -167,6 +172,17 @@ make check
 - **`make check`:** runs `cargo fmt --check`, Clippy, and the offline test suite (protocol encoding, native ABI compatibility, embedded library materialization, forced builds, Mach right ownership, broker state, log buffering, and CLI output). Build regression tests use an isolated temporary target directory. Loopback tests use local test ports only and never attach to `tccd` or alter system permissions.
 - **CI:** the [Source checks](.github/workflows/source-checks.yml) workflow verifies Rust formatting, Python syntax, and English-only repository text outside `README_CN.md`.
 
+### Publish
+
+Before publishing, confirm permission to redistribute upstream-derived code and declare the applicable `package.license` or `package.license-file` in `Cargo.toml`. Store a crates.io API token as the repository Actions secret `CARGO_REGISTRY_TOKEN`; crates.io requires a token for the first publication of a new crate.
+
+Push a tag named `v<version>`, matching `package.version` in `Cargo.toml`. The [Release workflow](.github/workflows/release.yml) validates the tag and license metadata, then runs two jobs on Apple Silicon macOS:
+
+- **GitHub Release:** runs `make check` and `cargo publish --dry-run --locked`, builds and verifies the standalone executable, and uploads `xtcc` and `xtcc.sha256`.
+- **crates.io:** after the GitHub Release succeeds, publishes the verified source package. The package includes the native sources, headers, and LLDB bootstrap required for installation.
+
+If a publication fails, rerun only the failed job. Published crate versions cannot be replaced; use a new version and tag for subsequent changes.
+
 ## Acknowledgements
 
 Thanks to [unixzii](https://github.com/unixzii) for [tcc-bypass](https://github.com/unixzii/tcc-bypass), which established the TCC hook protocol and lifecycle design used here. The following files are retained from commit `78da98104bafff7ecb96935cf198cb4196a28ffd`:
@@ -178,4 +194,4 @@ Thanks to [unixzii](https://github.com/unixzii) for [tcc-bypass](https://github.
 
 Service and logging identifiers use the `dev.xtcc` namespace (`dev.xtcc.control` and `dev.xtcc`), while exported `cyan_tccd_*` symbols remain unchanged.
 
-**Licensing:** no `LICENSE` file is present in the referenced upstream commit. Public source availability does not grant redistribution rights; confirm permission with the original author before redistributing upstream-derived code. Crate publishing is disabled in `Cargo.toml` (`publish = false`).
+**Licensing:** no `LICENSE` file is present in the referenced upstream commit. Public source availability does not grant redistribution rights; confirm permission with the original author before redistributing upstream-derived code. Release configuration does not grant these rights.

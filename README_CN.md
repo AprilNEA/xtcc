@@ -13,12 +13,17 @@
 
 运行控制命令要求 Apple Silicon Mac（macOS 15.0 及以上）、`root` 权限 (`sudo`) 以及关闭 SIP 限制（TCC 注入还要求支持 Python 的 LLDB）。`xtcc` 禁止自动调用 `sudo`，也不会修改 SIP、AMFI、启动参数、开发者模式或正在运行的 NE 守护进程。
 
-将发布包或本地 `make` 构建出的单个 `xtcc` 二进制安装到 `PATH`（例如 `/usr/local/bin`），然后运行 `xtcc doctor` 验证环境：
+从 [GitHub Releases](https://github.com/AprilNEA/xtcc/releases "前往外部站点") 下载 Apple Silicon 独立二进制与校验文件。验证下载文件后，将二进制安装到 `PATH`：
 
 ```sh
-sudo install -m 0755 target/release/xtcc /usr/local/bin/xtcc
+curl --fail --location --remote-name https://github.com/AprilNEA/xtcc/releases/latest/download/xtcc &&
+curl --fail --location --remote-name https://github.com/AprilNEA/xtcc/releases/latest/download/xtcc.sha256 &&
+shasum --algorithm 256 --check xtcc.sha256 &&
+sudo install -m 0755 xtcc /usr/local/bin/xtcc &&
 xtcc doctor
 ```
+
+满足[构建要求](#满足构建要求)后，也可以执行 `cargo install xtcc --locked` 从 crates.io 编译安装。本地源码构建则执行 `make`，安装生成的 `target/release/xtcc`。
 
 `xtcc doctor` 仅检查运行时工具路径（`xcrun` 与 LLDB）及内嵌载荷，不要求安装 Rust、Cargo、`make` 或编译器。检查以只读方式运行，无需 `root` 权限，不会写出动态库或附加系统进程。
 
@@ -149,7 +154,7 @@ sudo xtcc ne disconnect "$VPN_UUID"
 从源码构建与测试需满足以下条件：
 
 - Apple Silicon Mac (`arm64` / `arm64e`)，最低部署目标为 macOS 15.0（实际运行兼容性取决于当前系统版本的私有框架接口）。
-- Rust 1.85 及以上版本与 Cargo。
+- Rust 与 Cargo，开发工具链版本由 `rust-toolchain.toml` 固定。
 - Xcode（含 macOS SDK、Apple Clang 及支持 Python 的 LLDB）。
 - 系统提供的 `make` 与 `codesign`。
 
@@ -167,6 +172,17 @@ make check
 - **运行离线检查**：`make check` 运行格式检查、Clippy 与离线测试（覆盖协议编码、原生 ABI 布局、内嵌动态库释放、强制构建、Mach 端口所有权、broker 状态、日志缓冲与 CLI 输出）。构建回归测试使用隔离的临时产物目录。Mach 回环测试仅使用测试进程自建端口，不会附加 `tccd` 或修改系统权限。
 - **持续集成检查**：[源码检查工作流](.github/workflows/source-checks.yml)负责检查 Rust 格式、Python 语法及除 `README_CN.md` 外的英文文本规范。
 
+### 发布版本
+
+发布前必须确认上游代码的再分发授权，并在 `Cargo.toml` 中声明适用的 `package.license` 或 `package.license-file`。将 crates.io API token 保存为仓库的 Actions secret `CARGO_REGISTRY_TOKEN`；新 crate 首次发布必须使用 token。
+
+推送与 `Cargo.toml` 中 `package.version` 一致的 `v<版本号>` 标签。[发布工作流](.github/workflows/release.yml)会检查标签与许可元数据，然后在 Apple Silicon macOS 上执行两个任务：
+
+- **GitHub Release**：运行 `make check` 与 `cargo publish --dry-run --locked`，构建独立可执行文件并验证签名，上传 `xtcc` 与 `xtcc.sha256`。
+- **crates.io**：GitHub Release 成功后，发布已验证的源码包。源码包包含安装所需的原生代码、头文件与 LLDB 引导脚本。
+
+发布失败时，仅重跑失败的任务。已发布的 crate 版本不能覆盖；后续改动必须使用新版本号与标签。
+
 ## 致谢与许可
 
 感谢 [unixzii](https://github.com/unixzii "前往外部站点") 开发的 [tcc-bypass](https://github.com/unixzii/tcc-bypass "前往外部站点")。`xtcc` 的 TCC 控制层沿用了 `tcc-bypass` 的通信协议与生命周期设计，并自提交 `78da98104bafff7ecb96935cf198cb4196a28ffd` 保留了以下 Objective-C 文件：
@@ -178,4 +194,4 @@ make check
 
 服务标识与日志子系统已改为 `dev.xtcc` 命名空间（`dev.xtcc.control` 与 `dev.xtcc`），注入库导出的 `cyan_tccd_*` 符号保持不变。
 
-**许可说明**：上述上游提交未包含 `LICENSE` 文件。公开源码不代表授予再分发权利；在发布或分发包含上游派生代码的版本前，必须先取得原作者授权。`Cargo.toml` 已设置 `publish = false` 禁用包发布。
+**许可说明**：上述上游提交未包含 `LICENSE` 文件。公开源码不代表授予再分发权利；在发布或分发包含上游派生代码的版本前，必须先取得原作者授权。发布流程配置不代表取得上述授权。
