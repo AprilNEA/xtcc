@@ -184,6 +184,8 @@ Push a tag named `v<version>`, matching `package.version` in `Cargo.toml`. The [
 - **GitHub Release:** runs `make check` and `cargo publish --dry-run --locked`, builds and verifies the standalone executable, and uploads `xtcc`, `xtcc.LICENSE`, and `xtcc.sha256`. The checksum covers both the binary and the license.
 - **crates.io:** after the GitHub Release succeeds, publishes the verified source package. The package includes the native sources, headers, and LLDB bootstrap required for installation.
 
+Run the Release workflow manually to preflight a branch before tagging. Manual runs perform the checks, builds, and package verification without creating a GitHub Release or uploading a crate.
+
 If a publication fails, rerun only the failed job. Published crate versions cannot be replaced; use a new version and tag for subsequent changes.
 
 ## Acknowledgements

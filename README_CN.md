@@ -184,6 +184,8 @@ make check
 - **GitHub Release**：运行 `make check` 与 `cargo publish --dry-run --locked`，构建独立可执行文件并验证签名，上传 `xtcc`、`xtcc.LICENSE` 与 `xtcc.sha256`。校验文件同时覆盖二进制与许可证。
 - **crates.io**：GitHub Release 成功后，发布已验证的源码包。源码包包含安装所需的原生代码、头文件与 LLDB 引导脚本。
 
+打标签前，手动运行 Release 工作流预检分支。手动运行会执行检查、构建和打包验证，不创建 GitHub Release，也不上传 crate。
+
 发布失败时，仅重跑失败的任务。已发布的 crate 版本不能覆盖；后续改动必须使用新版本号与标签。
 
 ## 致谢与许可

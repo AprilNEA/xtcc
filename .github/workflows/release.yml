@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,11 +27,11 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
-      - name: Validate release tag and license metadata
+      - name: Validate release metadata
         run: >-
           cargo metadata --no-deps --locked --format-version 1 |
-          jq --exit-status --arg tag "$GITHUB_REF_NAME"
-          '.packages[0] | $tag == ("v" + .version) and (.license != null or .license_file != null)'
+          jq --exit-status --arg tag "$GITHUB_REF_NAME" --arg ref_type "$GITHUB_REF_TYPE"
+          '.packages[0] | ($ref_type != "tag" or $tag == ("v" + .version)) and (.license != null or .license_file != null)'
 
       - name: Check source files
         run: python3 .github/scripts/check_source.py
@@ -55,6 +56,7 @@ jobs:
         run: shasum --algorithm 256 xtcc xtcc.LICENSE > xtcc.sha256
 
       - name: Publish binary, license, and checksum
+        if: github.event_name == 'push'
         working-directory: target/release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -76,7 +78,7 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
-      - name: Publish crate
+      - name: Publish crate (dry run on manual dispatch)
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked
+        run: cargo publish --locked ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
