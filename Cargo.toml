@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Temporary macOS TCC development controls"
+license = "MIT"
 repository = "https://github.com/AprilNEA/xtcc"
 readme = "README.md"
 publish = ["crates-io"]

@@ -47,17 +47,20 @@ jobs:
       - name: Verify binary signature
         run: codesign --verify --strict target/release/xtcc
 
+      - name: Include license
+        run: cp LICENSE target/release/xtcc.LICENSE
+
       - name: Generate checksum
         working-directory: target/release
-        run: shasum --algorithm 256 xtcc > xtcc.sha256
+        run: shasum --algorithm 256 xtcc xtcc.LICENSE > xtcc.sha256
 
-      - name: Publish binary and checksum
+      - name: Publish binary, license, and checksum
         working-directory: target/release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: >-
-          gh release create "$GITHUB_REF_NAME" xtcc xtcc.sha256
+          gh release create "$GITHUB_REF_NAME" xtcc xtcc.LICENSE xtcc.sha256
           --verify-tag --generate-notes --title "xtcc $GITHUB_REF_NAME"
 
   crates-io:

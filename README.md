@@ -15,13 +15,16 @@
 
 Runtime control commands require an Apple Silicon Mac (macOS 15.0+), `root` (`sudo`), and disabled SIP restrictions (TCC injection also requires Python-enabled LLDB). `xtcc` never invokes `sudo` automatically and never modifies SIP, AMFI, boot arguments, developer mode, or running NE daemons.
 
-Download the standalone Apple Silicon binary and checksum from [GitHub Releases](https://github.com/AprilNEA/xtcc/releases), verify the download, and install it onto your `PATH`:
+Download the standalone Apple Silicon binary, license, and checksum from [GitHub Releases](https://github.com/AprilNEA/xtcc/releases), verify the downloads, and install the binary onto your `PATH`:
 
 ```sh
 curl --fail --location --remote-name https://github.com/AprilNEA/xtcc/releases/latest/download/xtcc &&
+curl --fail --location --remote-name https://github.com/AprilNEA/xtcc/releases/latest/download/xtcc.LICENSE &&
 curl --fail --location --remote-name https://github.com/AprilNEA/xtcc/releases/latest/download/xtcc.sha256 &&
 shasum --algorithm 256 --check xtcc.sha256 &&
 sudo install -m 0755 xtcc /usr/local/bin/xtcc &&
+sudo install -d /usr/local/share/licenses/xtcc &&
+sudo install -m 0644 xtcc.LICENSE /usr/local/share/licenses/xtcc/LICENSE &&
 xtcc doctor
 ```
 
@@ -174,11 +177,11 @@ make check
 
 ### Publish
 
-Before publishing, confirm permission to redistribute upstream-derived code and declare the applicable `package.license` or `package.license-file` in `Cargo.toml`. Store a crates.io API token as the repository Actions secret `CARGO_REGISTRY_TOKEN`; crates.io requires a token for the first publication of a new crate.
+Before publishing, confirm permission to redistribute upstream-derived code. Store a crates.io API token as the repository Actions secret `CARGO_REGISTRY_TOKEN`; crates.io requires a token for the first publication of a new crate.
 
 Push a tag named `v<version>`, matching `package.version` in `Cargo.toml`. The [Release workflow](.github/workflows/release.yml) validates the tag and license metadata, then runs two jobs on Apple Silicon macOS:
 
-- **GitHub Release:** runs `make check` and `cargo publish --dry-run --locked`, builds and verifies the standalone executable, and uploads `xtcc` and `xtcc.sha256`.
+- **GitHub Release:** runs `make check` and `cargo publish --dry-run --locked`, builds and verifies the standalone executable, and uploads `xtcc`, `xtcc.LICENSE`, and `xtcc.sha256`. The checksum covers both the binary and the license.
 - **crates.io:** after the GitHub Release succeeds, publishes the verified source package. The package includes the native sources, headers, and LLDB bootstrap required for installation.
 
 If a publication fails, rerun only the failed job. Published crate versions cannot be replaced; use a new version and tag for subsequent changes.
@@ -194,4 +197,4 @@ Thanks to [unixzii](https://github.com/unixzii) for [tcc-bypass](https://github.
 
 Service and logging identifiers use the `dev.xtcc` namespace (`dev.xtcc.control` and `dev.xtcc`), while exported `cyan_tccd_*` symbols remain unchanged.
 
-**Licensing:** no `LICENSE` file is present in the referenced upstream commit. Public source availability does not grant redistribution rights; confirm permission with the original author before redistributing upstream-derived code. Release configuration does not grant these rights.
+**Licensing:** xtcc is released under the [MIT License](LICENSE). The referenced upstream commit did not include a `LICENSE` file; the project-level MIT declaration does not itself establish permission from the original author.

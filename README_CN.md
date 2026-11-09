@@ -13,13 +13,16 @@
 
 运行控制命令要求 Apple Silicon Mac（macOS 15.0 及以上）、`root` 权限 (`sudo`) 以及关闭 SIP 限制（TCC 注入还要求支持 Python 的 LLDB）。`xtcc` 禁止自动调用 `sudo`，也不会修改 SIP、AMFI、启动参数、开发者模式或正在运行的 NE 守护进程。
 
-从 [GitHub Releases](https://github.com/AprilNEA/xtcc/releases "前往外部站点") 下载 Apple Silicon 独立二进制与校验文件。验证下载文件后，将二进制安装到 `PATH`：
+从 [GitHub Releases](https://github.com/AprilNEA/xtcc/releases "前往外部站点") 下载 Apple Silicon 独立二进制、许可证与校验文件。验证下载文件后，将二进制安装到 `PATH`：
 
 ```sh
 curl --fail --location --remote-name https://github.com/AprilNEA/xtcc/releases/latest/download/xtcc &&
+curl --fail --location --remote-name https://github.com/AprilNEA/xtcc/releases/latest/download/xtcc.LICENSE &&
 curl --fail --location --remote-name https://github.com/AprilNEA/xtcc/releases/latest/download/xtcc.sha256 &&
 shasum --algorithm 256 --check xtcc.sha256 &&
 sudo install -m 0755 xtcc /usr/local/bin/xtcc &&
+sudo install -d /usr/local/share/licenses/xtcc &&
+sudo install -m 0644 xtcc.LICENSE /usr/local/share/licenses/xtcc/LICENSE &&
 xtcc doctor
 ```
 
@@ -174,11 +177,11 @@ make check
 
 ### 发布版本
 
-发布前必须确认上游代码的再分发授权，并在 `Cargo.toml` 中声明适用的 `package.license` 或 `package.license-file`。将 crates.io API token 保存为仓库的 Actions secret `CARGO_REGISTRY_TOKEN`；新 crate 首次发布必须使用 token。
+发布前必须确认上游代码的再分发授权。将 crates.io API token 保存为仓库的 Actions secret `CARGO_REGISTRY_TOKEN`；新 crate 首次发布必须使用 token。
 
 推送与 `Cargo.toml` 中 `package.version` 一致的 `v<版本号>` 标签。[发布工作流](.github/workflows/release.yml)会检查标签与许可元数据，然后在 Apple Silicon macOS 上执行两个任务：
 
-- **GitHub Release**：运行 `make check` 与 `cargo publish --dry-run --locked`，构建独立可执行文件并验证签名，上传 `xtcc` 与 `xtcc.sha256`。
+- **GitHub Release**：运行 `make check` 与 `cargo publish --dry-run --locked`，构建独立可执行文件并验证签名，上传 `xtcc`、`xtcc.LICENSE` 与 `xtcc.sha256`。校验文件同时覆盖二进制与许可证。
 - **crates.io**：GitHub Release 成功后，发布已验证的源码包。源码包包含安装所需的原生代码、头文件与 LLDB 引导脚本。
 
 发布失败时，仅重跑失败的任务。已发布的 crate 版本不能覆盖；后续改动必须使用新版本号与标签。
@@ -194,4 +197,4 @@ make check
 
 服务标识与日志子系统已改为 `dev.xtcc` 命名空间（`dev.xtcc.control` 与 `dev.xtcc`），注入库导出的 `cyan_tccd_*` 符号保持不变。
 
-**许可说明**：上述上游提交未包含 `LICENSE` 文件。公开源码不代表授予再分发权利；在发布或分发包含上游派生代码的版本前，必须先取得原作者授权。发布流程配置不代表取得上述授权。
+**许可说明**：xtcc 使用 [MIT 许可证](LICENSE)。上述上游提交未包含 `LICENSE` 文件；本项目的 MIT 声明本身不代表取得原作者授权。
