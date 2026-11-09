@@ -177,14 +177,16 @@ make check
 
 ### 发布版本
 
-发布前必须确认上游代码的再分发授权。将 crates.io API token 保存为仓库的 Actions secret `CARGO_REGISTRY_TOKEN`；新 crate 首次发布必须使用 token。
+发布前必须确认上游代码的再分发授权。在 crates.io 中为 `AprilNEA/xtcc` 登记 [Trusted Publishing](https://crates.io/docs/trusted-publishing "前往外部站点")，工作流文件填 `release.yml`，不限定 environment。
 
 推送与 `Cargo.toml` 中 `package.version` 一致的 `v<版本号>` 标签。[发布工作流](.github/workflows/release.yml)会检查标签与许可元数据，然后在 Apple Silicon macOS 上执行两个任务：
 
 - **GitHub Release**：运行 `make check` 与 `cargo publish --dry-run --locked`，构建独立可执行文件并验证签名，上传 `xtcc`、`xtcc.LICENSE` 与 `xtcc.sha256`。校验文件同时覆盖二进制与许可证。
-- **crates.io**：GitHub Release 成功后，发布已验证的源码包。源码包包含安装所需的原生代码、头文件与 LLDB 引导脚本。
+- **crates.io**：GitHub Release 成功后，用 GitHub OIDC 交换短期 token，再发布已验证的源码包。源码包包含安装所需的原生代码、头文件与 LLDB 引导脚本。
 
-打标签前，手动运行 Release 工作流预检分支。手动运行会执行检查、构建和打包验证，不创建 GitHub Release，也不上传 crate。
+工作流不读取仓库的 `CARGO_REGISTRY_TOKEN` secret，也不回退至 API token；认证 action 会在任务结束时撤销短期 token。
+
+打标签前，手动运行 Release 工作流预检分支。手动运行会执行检查、构建、打包验证和 OIDC 认证，不创建 GitHub Release，也不上传 crate。
 
 发布失败时，仅重跑失败的任务。已发布的 crate 版本不能覆盖；后续改动必须使用新版本号与标签。
 

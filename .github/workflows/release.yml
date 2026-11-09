@@ -69,6 +69,9 @@ jobs:
     name: Publish to crates.io
     needs: github-release
     runs-on: macos-26
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,7 +81,11 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
       - name: Publish crate (dry run on manual dispatch)
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --locked ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
