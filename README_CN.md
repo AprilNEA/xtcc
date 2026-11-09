@@ -170,7 +170,7 @@ make
 make check
 ```
 
-- **单文件构建**：`make` 执行 `cargo build --release --locked`，由 `build.rs` 编译并 ad-hoc 签名 `libxtcc_inject.dylib` 与 `libxtcc_ne.dylib`，最终内嵌生成单一可执行文件 `target/release/xtcc`。若 Cargo 不在默认路径 `$HOME/.cargo/bin/cargo`，可以执行 `make CARGO=/path/to/cargo`。
+- **单文件构建**：`make` 使用 `PATH` 中的 Cargo 执行 `cargo build --release --locked`，由 `build.rs` 编译并 ad-hoc 签名 `libxtcc_inject.dylib` 与 `libxtcc_ne.dylib`，最终内嵌生成单一可执行文件 `target/release/xtcc`。可以用 `make CARGO=/path/to/cargo` 指定 Cargo 路径。
 - **强制重新构建**：`make rebuild` 或 `xtcc build --force` 仅清理 `xtcc` 的 release 产物，然后重新构建可执行文件和两个原生库，保留依赖缓存与 debug 产物。
 - **运行离线检查**：`make check` 运行格式检查、Clippy 与离线测试（覆盖协议编码、原生 ABI 布局、内嵌动态库释放、强制构建、Mach 端口所有权、broker 状态、日志缓冲与 CLI 输出）。构建回归测试使用隔离的临时产物目录。Mach 回环测试仅使用测试进程自建端口，不会附加 `tccd` 或修改系统权限。
 - **持续集成检查**：[源码检查工作流](.github/workflows/source-checks.yml)负责检查 Rust 格式、Python 语法及除 `README_CN.md` 外的英文文本规范。

@@ -1,6 +1,6 @@
 .PHONY: all rust rebuild check clean
 
-CARGO ?= $(HOME)/.cargo/bin/cargo
+CARGO ?= cargo
 
 all: rust
 

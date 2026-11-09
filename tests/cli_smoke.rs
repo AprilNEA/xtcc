@@ -1,5 +1,6 @@
 //! Exercise parsing, diagnostics, and isolated builds; never invoke control operations.
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use xtcc::bootstrap::NativeLibrary;
 
@@ -162,13 +163,30 @@ fn doctor_reports_embedded_libraries_without_external_dylibs() {
 }
 
 #[test]
-fn forced_build_regenerates_embedded_native_libraries() {
+fn build_finds_cargo_on_path_and_force_regenerates_embedded_libraries() {
     let temporary = tempfile::tempdir().unwrap();
     let target = temporary.path().join("target");
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let mut paths = vec![Path::new(env!("CARGO")).parent().unwrap().to_path_buf()];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     let mut command = Command::new(env!("CARGO_BIN_EXE_xtcc"));
     command
         .args(["build", "--json"])
-        .env("CARGO", env!("CARGO"))
+        .env_remove("CARGO")
+        .env("HOME", temporary.path())
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env(
+            "CARGO_HOME",
+            std::env::var_os("CARGO_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".cargo")),
+        )
+        .env(
+            "RUSTUP_HOME",
+            std::env::var_os("RUSTUP_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".rustup")),
+        )
         .env("CARGO_TARGET_DIR", &target)
         .env("CARGO_NET_OFFLINE", "true");
     let initial = command.output().unwrap();
@@ -195,7 +213,11 @@ fn forced_build_regenerates_embedded_native_libraries() {
         .unwrap();
     }
 
-    let rebuilt = command.arg("--force").output().unwrap();
+    let rebuilt = command
+        .arg("--force")
+        .env("CARGO", env!("CARGO"))
+        .output()
+        .unwrap();
     assert!(rebuilt.status.success(), "{rebuilt:?}");
     let doctor = Command::new(target.join("release/xtcc"))
         .args(["doctor", "--json"])

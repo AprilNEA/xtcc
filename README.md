@@ -170,7 +170,7 @@ make
 make check
 ```
 
-- **`make`:** runs `cargo build --release --locked`. `build.rs` compiles and ad-hoc-signs both `arm64e` native libraries (`libxtcc_inject.dylib` and `libxtcc_ne.dylib`) and embeds them into `target/release/xtcc`. Override Cargo with `make CARGO=/path/to/cargo` if Cargo is not at `$HOME/.cargo/bin/cargo`.
+- **`make`:** runs `cargo build --release --locked` using Cargo from `PATH`. `build.rs` compiles and ad-hoc-signs both `arm64e` native libraries (`libxtcc_inject.dylib` and `libxtcc_ne.dylib`) and embeds them into `target/release/xtcc`. Use `make CARGO=/path/to/cargo` to select an explicit Cargo executable.
 - **`make rebuild` / `xtcc build --force`:** clears only `xtcc` release artifacts before rebuilding the executable and both native libraries. Dependency caches and debug artifacts are retained.
 - **`make check`:** runs `cargo fmt --check`, Clippy, and the offline test suite (protocol encoding, native ABI compatibility, embedded library materialization, forced builds, Mach right ownership, broker state, log buffering, and CLI output). Build regression tests use an isolated temporary target directory. Loopback tests use local test ports only and never attach to `tccd` or alter system permissions.
 - **CI:** the [Source checks](.github/workflows/source-checks.yml) workflow verifies Rust formatting, Python syntax, and English-only repository text outside `README_CN.md`.
